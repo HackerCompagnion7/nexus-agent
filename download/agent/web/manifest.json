@@ -1,0 +1,27 @@
+{
+  "name": "JARVIS",
+  "short_name": "JARVIS",
+  "description": "Autonomous voice AI agent powered by Mistral Small",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0f",
+  "theme_color": "#6c5ce7",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='32' fill='%236c5ce7'/><text x='96' y='128' font-size='100' font-family='sans-serif' font-weight='900' fill='white' text-anchor='middle'>J</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Voice Command",
+      "short_name": "Voice",
+      "url": "/?voice=true",
+      "description": "Start voice command"
+    }
+  ]
+}

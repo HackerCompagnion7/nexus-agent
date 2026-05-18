@@ -696,9 +696,152 @@ const BUILT_IN_TOOLS = {
       required: ['query']
     },
     handler: async (params, ctx) => {
-      // This will be connected to the Memory module at runtime
-      // Placeholder that gets replaced during initialization
       return JSON.stringify({ note: 'Memory system not yet connected', query: params.query });
+    }
+  },
+
+  // ─── 13. OCR (Optical Character Recognition) ────────────
+  ocr_extract: {
+    name: 'ocr_extract',
+    description: 'Extract text from an image file using OCR (Optical Character Recognition). Requires tesseract to be installed (pkg install tesseract in Termux).',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Path to the image file (PNG, JPG, TIFF, PDF)' },
+        language: { type: 'string', default: 'eng', description: 'Language for OCR (eng=English, spa=Spanish, etc.)' },
+        output_format: { type: 'string', enum: ['text', 'json'], default: 'text', description: 'Output format' }
+      },
+      required: ['path']
+    },
+    handler: async (params, ctx) => {
+      const filePath = path.resolve(ctx.sandboxDir, params.path);
+      if (!fs.existsSync(filePath)) throw new Error(`Image file not found: ${filePath}`);
+
+      const lang = params.language || 'eng';
+      const timeout = 60000; // OCR can be slow
+
+      try {
+        // Check if tesseract is available
+        execSync('which tesseract 2>/dev/null', { encoding: 'utf-8' });
+      } catch {
+        // Tesseract not installed — try to install or give helpful error
+        const isTermux = fs.existsSync('/data/data/com.termux');
+        const installCmd = isTermux ? 'pkg install tesseract' : 'sudo apt install tesseract-ocr';
+        throw new Error(
+          `Tesseract OCR is not installed. Install it with:\n  ${installCmd}\n` +
+          `For Spanish language support also run:\n  ${isTermux ? 'pkg install tesseract-es' : 'sudo apt install tesseract-ocr-spa'}`
+        );
+      }
+
+      try {
+        // Run tesseract
+        const output = execSync(
+          `tesseract "${filePath}" stdout -l ${lang} 2>/dev/null`,
+          {
+            encoding: 'utf-8',
+            timeout,
+            maxBuffer: 5 * 1024 * 1024
+          }
+        ).trim();
+
+        if (!output) {
+          return 'No text detected in the image.';
+        }
+
+        if (params.output_format === 'json') {
+          // Also get confidence data
+          let confidence = 'N/A';
+          try {
+            const tsvOutput = execSync(
+              `tesseract "${filePath}" stdout -l ${lang} --tsv 2>/dev/null`,
+              { encoding: 'utf-8', timeout }
+            );
+            const lines = tsvOutput.trim().split('\n');
+            if (lines.length > 1) {
+              const confValues = lines.slice(1)
+                .map(l => parseInt(l.split('\t')[l.split('\t').length - 1]))
+                .filter(v => !isNaN(v) && v > 0);
+              if (confValues.length > 0) {
+                confidence = Math.round(confValues.reduce((a, b) => a + b, 0) / confValues.length);
+              }
+            }
+          } catch {}
+
+          return JSON.stringify({
+            text: output,
+            confidence,
+            language: lang,
+            file: params.path,
+            characters: output.length
+          }, null, 2);
+        }
+
+        return output;
+      } catch (error) {
+        if (error.killed) {
+          throw new Error('OCR processing timed out (image may be too large)');
+        }
+        throw new Error(`OCR failed: ${error.message}`);
+      }
+    }
+  },
+
+  // ─── 14. SCREENSHOT OCR (Termux) ────────────────────────
+  ocr_screenshot: {
+    name: 'ocr_screenshot',
+    description: 'Take a screenshot and extract text from it using OCR. Only works in Termux with termux-api installed.',
+    parameters: {
+      type: 'object',
+      properties: {
+        language: { type: 'string', default: 'eng', description: 'Language for OCR' },
+        delay: { type: 'integer', default: 1, description: 'Delay before screenshot in seconds' }
+      }
+    },
+    handler: async (params, ctx) => {
+      const isTermux = fs.existsSync('/data/data/com.termux');
+      if (!isTermux) throw new Error('Screenshot only works in Termux on Android');
+
+      // Check for termux-api
+      try {
+        execSync('which termux-screenshot 2>/dev/null', { encoding: 'utf-8' });
+      } catch {
+        throw new Error(
+          'termux-api not installed. Install with:\n' +
+          '  pkg install termux-api\n' +
+          '  Also install the Termux:API app from F-Droid'
+        );
+      }
+
+      const screenshotPath = `/tmp/jarvis_screenshot_${Date.now()}.png`;
+
+      try {
+        // Take screenshot
+        if (params.delay > 0) {
+          await new Promise(r => setTimeout(r, (params.delay || 1) * 1000));
+        }
+        execSync(`termux-screenshot -f "${screenshotPath}"`, { encoding: 'utf-8', timeout: 10000 });
+
+        // Wait for file
+        await new Promise(r => setTimeout(r, 1000));
+        if (!fs.existsSync(screenshotPath)) {
+          throw new Error('Screenshot was not saved. Check Termux:API app permissions.');
+        }
+
+        // OCR the screenshot
+        const lang = params.language || 'eng';
+        const output = execSync(
+          `tesseract "${screenshotPath}" stdout -l ${lang} 2>/dev/null`,
+          { encoding: 'utf-8', timeout: 60000, maxBuffer: 5 * 1024 * 1024 }
+        ).trim();
+
+        // Clean up
+        try { fs.unlinkSync(screenshotPath); } catch {}
+
+        return output || 'No text detected in screenshot.';
+      } catch (error) {
+        try { fs.unlinkSync(screenshotPath); } catch {}
+        throw error;
+      }
     }
   }
 };

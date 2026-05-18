@@ -535,7 +535,7 @@ ${C.bmagenta}${C.bold} | \\ | || \\ | || __)/ __|| __|| _ \\/ __|${C.reset}
 ${C.bmagenta}${C.bold} |  \\| ||  \\| || _| \\__ \\| _| |   /\\__ \\${C.reset}
 ${C.bmagenta}${C.bold} |_|\\_||_|\\_|||___||___/|___||_|_\\|___/${C.reset}
 
-${C.dim}  Autonomous Agent v1.1${C.reset}
+${C.dim}  JARVIS v2.0 — Voice + OCR + Persistence${C.reset}
 ${C.cyan}  Mistral Small 4 \u00B7 NVIDIA API \u00B7 ${env}${C.reset}
 
 ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
@@ -670,10 +670,10 @@ ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
 // ═══════════════════════════════════════════════════════════════
 
 async function startWebServer(agent, port = 8080) {
-  const htmlPath = path.join(__dirname, 'web', 'index.html');
+  const webDir = path.join(__dirname, 'web');
+  const htmlPath = path.join(webDir, 'index.html');
 
   const server = http.createServer(async (req, res) => {
-    // CORS headers
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -686,9 +686,24 @@ async function startWebServer(agent, port = 8080) {
       return;
     }
 
+    // Serve web assets
     if (req.url === '/' || req.url === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders });
       res.end(fs.readFileSync(htmlPath, 'utf-8'));
+      return;
+    }
+
+    // Service Worker
+    if (req.url === '/sw.js') {
+      res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', ...corsHeaders });
+      res.end(fs.readFileSync(path.join(webDir, 'sw.js'), 'utf-8'));
+      return;
+    }
+
+    // Manifest
+    if (req.url === '/manifest.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ...corsHeaders });
+      res.end(fs.readFileSync(path.join(webDir, 'manifest.json'), 'utf-8'));
       return;
     }
 
