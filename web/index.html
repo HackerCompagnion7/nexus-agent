@@ -718,13 +718,92 @@ function toggleAutoListen() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  TEXT TO SPEECH — Voice Output
+//  TEXT TO SPEECH — Server Piper TTS + Browser Fallback
 // ═══════════════════════════════════════════════════════════
-function speak(text) {
+let currentAudio = null; // Track server TTS audio element
+
+async function speak(text) {
+  // Clean text for TTS — remove code blocks, markdown
+  const clean = text
+    .replace(/```[\s\S]*?```/g, ' bloque de c\u00f3digo omitido ')
+    .replace(/`[^`]+`/g, ' c\u00f3digo ')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/#{1,6}\s/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[•\-]\s/g, '')
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, ', ')
+    .slice(0, 800);
+
+  if (!clean.trim()) return;
+
+  // ─── Try server-side Piper TTS first (male voice) ────────
+  try {
+    const ttsRes = await fetch(`${S.url}/api/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: clean, lang: S.lang.slice(0,2) })
+    });
+
+    if (ttsRes.ok && ttsRes.headers.get('content-type')?.includes('audio')) {
+      const audioBlob = await ttsRes.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      currentAudio = new Audio(audioUrl);
+
+      // Visual feedback
+      S.speaking = true;
+      orb.classList.add('speaking');
+      orb.classList.remove('thinking');
+      dot.className = 'dot speak';
+      statusEl.textContent = 'Hablando...';
+      statusEl.className = 'status speaking-text';
+      stopBtn.style.display = 'flex';
+      updatePipWindow('speaking');
+
+      currentAudio.onended = () => {
+        S.speaking = false;
+        orb.classList.remove('speaking');
+        dot.className = 'dot';
+        stopBtn.style.display = 'none';
+        updatePipWindow('idle');
+        URL.revokeObjectURL(audioUrl);
+        currentAudio = null;
+
+        if (S.autoListen && !S.loading) {
+          setTimeout(() => startListening(), 600);
+        } else {
+          statusEl.textContent = 'Toca el orbe para hablar';
+          statusEl.className = 'status';
+        }
+      };
+
+      currentAudio.onerror = () => {
+        // Audio playback failed, try browser TTS
+        S.speaking = false;
+        orb.classList.remove('speaking');
+        dot.className = 'dot';
+        stopBtn.style.display = 'none';
+        currentAudio = null;
+        speakBrowser(text);
+      };
+
+      await currentAudio.play();
+      return;
+    }
+  } catch (e) {
+    // Server TTS not available — fallback to browser
+    console.log('Server TTS unavailable, using browser TTS');
+  }
+
+  // ─── Fallback: Browser SpeechSynthesis ────────────────────
+  speakBrowser(text);
+}
+
+function speakBrowser(text) {
   if (!S.synth) return;
   S.synth.cancel();
 
-  // Clean text for TTS — remove code blocks, markdown
   const clean = text
     .replace(/```[\s\S]*?```/g, ' bloque de c\u00f3digo omitido ')
     .replace(/`[^`]+`/g, ' c\u00f3digo ')
@@ -738,15 +817,15 @@ function speak(text) {
 
   const utter = new SpeechSynthesisUtterance(clean);
   utter.rate = S.rate;
-  utter.pitch = 0.95;
+  utter.pitch = 0.9;
 
   const voices = S.synth.getVoices();
   if (S.voice && voices[S.voice]) {
     utter.voice = voices[S.voice];
   } else {
-    // Prefer Google voices for the selected language
-    const preferred = voices.find(v => v.name.includes('Google') && v.lang.startsWith(S.lang.slice(0,2)))
-      || voices.find(v => v.name.includes('Google') && v.lang.startsWith('es'))
+    // Prefer male Google voices for the selected language
+    const preferred = voices.find(v => v.name.includes('Google') && v.lang.startsWith(S.lang.slice(0,2)) && /male|jorge|alvaro|daniel/i.test(v.name))
+      || voices.find(v => v.name.includes('Google') && v.lang.startsWith(S.lang.slice(0,2)))
       || voices.find(v => v.lang.startsWith(S.lang.slice(0,2)))
       || voices[0];
     if (preferred) utter.voice = preferred;
@@ -769,7 +848,6 @@ function speak(text) {
     stopBtn.style.display = 'none';
     updatePipWindow('idle');
 
-    // Auto-listen after speaking
     if (S.autoListen && !S.loading) {
       setTimeout(() => startListening(), 600);
     } else {
@@ -790,7 +868,14 @@ function speak(text) {
 }
 
 function stopSpeaking() {
-  S.synth.cancel();
+  // Stop server audio
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+  }
+  // Stop browser TTS
+  if (S.synth) S.synth.cancel();
   S.speaking = false;
   orb.classList.remove('speaking');
   dot.className = 'dot';

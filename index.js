@@ -35,6 +35,7 @@ const { LLMClient, TokenEstimator, CONFIG } = require('./llm');
 const { ToolRegistry, ToolExecutor, BUILT_IN_TOOLS } = require('./tools');
 const { MemorySystem } = require('./memory');
 const { Coordinator, TASK_STATE } = require('./coordinator');
+const { PiperTTS, VOICES, DEFAULT_VOICE_MAP } = require('./tts');
 
 // ─── ANSI Colors (Termux compatible) ──────────────────────────
 const C = {
@@ -883,6 +884,15 @@ ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
 
 async function startWebServer(agent, port = 8080) {
   const htmlPath = path.join(__dirname, 'web', 'index.html');
+  const webDir = path.join(__dirname, 'web');
+
+  // ─── Initialize TTS Engine ──────────────────────────────────
+  const tts = new PiperTTS({ baseDir: __dirname });
+  if (tts.isAvailable()) {
+    console.log(`[JARVIS] TTS: Piper ready — ${tts.defaultVoice}`);
+  } else {
+    console.log('[JARVIS] TTS: Piper not found (falling back to browser SpeechSynthesis)');
+  }
 
   const server = http.createServer(async (req, res) => {
     // CORS headers
@@ -898,12 +908,25 @@ async function startWebServer(agent, port = 8080) {
       return;
     }
 
+    // ─── Static Files (web/) ──────────────────────────────────
     if (req.url === '/' || req.url === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders });
       res.end(fs.readFileSync(htmlPath, 'utf-8'));
       return;
     }
 
+    // Serve manifest.json, sw.js from web/
+    if (req.url === '/manifest.json' || req.url === '/sw.js') {
+      const filePath = path.join(webDir, req.url);
+      if (fs.existsSync(filePath)) {
+        const contentType = req.url.endsWith('.json') ? 'application/json' : 'application/javascript';
+        res.writeHead(200, { 'Content-Type': `${contentType}; charset=utf-8`, ...corsHeaders });
+        res.end(fs.readFileSync(filePath, 'utf-8'));
+        return;
+      }
+    }
+
+    // ─── Chat API ─────────────────────────────────────────────
     if (req.url === '/api/chat' && req.method === 'POST') {
       let body = '';
       req.on('data', chunk => body += chunk);
@@ -921,7 +944,50 @@ async function startWebServer(agent, port = 8080) {
       return;
     }
 
-    // New: Set API key from web
+    // ─── TTS API — Server-side Piper voice synthesis ──────────
+    if (req.url === '/api/tts' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const { text, voice, lang } = JSON.parse(body);
+          if (!text || !text.trim()) {
+            res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
+            res.end(JSON.stringify({ error: 'No text provided' }));
+            return;
+          }
+
+          if (!tts.isAvailable()) {
+            res.writeHead(503, { 'Content-Type': 'application/json', ...corsHeaders });
+            res.end(JSON.stringify({ error: 'TTS not available — Piper not installed', fallback: true }));
+            return;
+          }
+
+          const wavBuffer = await tts.synthesize(text, { voice, lang });
+          res.writeHead(200, {
+            'Content-Type': 'audio/wav',
+            'Content-Length': wavBuffer.length,
+            'Cache-Control': 'no-cache',
+            ...corsHeaders
+          });
+          res.end(wavBuffer);
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json', ...corsHeaders });
+          res.end(JSON.stringify({ error: error.message, fallback: true }));
+        }
+      });
+      return;
+    }
+
+    // ─── TTS Voices List ──────────────────────────────────────
+    if (req.url === '/api/tts/voices' && req.method === 'GET') {
+      const voices = tts.isAvailable() ? tts.getAvailableVoices() : [];
+      res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
+      res.end(JSON.stringify({ available: tts.isAvailable(), voices }));
+      return;
+    }
+
+    // ─── API Key ──────────────────────────────────────────────
     if (req.url === '/api/apikey' && req.method === 'POST') {
       let body = '';
       req.on('data', chunk => body += chunk);
@@ -939,12 +1005,16 @@ async function startWebServer(agent, port = 8080) {
       return;
     }
 
+    // ─── Status ───────────────────────────────────────────────
     if (req.url === '/api/status' && req.method === 'GET') {
+      const stats = agent.getStats();
+      stats.tts = tts.getStats();
       res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
-      res.end(JSON.stringify(agent.getStats()));
+      res.end(JSON.stringify(stats));
       return;
     }
 
+    // ─── Memory Query ─────────────────────────────────────────
     if (req.url.startsWith('/api/memory') && req.method === 'GET') {
       const url = new URL(req.url, `http://localhost:${port}`);
       const query = url.searchParams.get('q') || '';
@@ -961,6 +1031,11 @@ async function startWebServer(agent, port = 8080) {
 
   server.listen(port, '0.0.0.0', () => {
     console.log(`[JARVIS] Web: http://localhost:${port}`);
+    if (tts.isAvailable()) {
+      console.log(`[JARVIS] TTS: ${tts.defaultVoice} (Piper)`);
+    } else {
+      console.log('[JARVIS] TTS: Browser fallback (run install.sh for Piper)');
+    }
   });
 
   return server;
