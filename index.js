@@ -26,7 +26,7 @@ const http = require('http');
       if (eqIdx === -1) continue;
       const key = trimmed.slice(0, eqIdx).trim();
       const val = trimmed.slice(eqIdx + 1).trim();
-      if (!process.env[key]) process.env[key] = val; // Don't override existing
+      if (!process.env[key]) process.env[key] = val;
     }
   }
 })();
@@ -42,7 +42,6 @@ const C = {
   bold:    '\x1b[1m',
   dim:     '\x1b[2m',
   italic:  '\x1b[3m',
-  // Foreground
   black:   '\x1b[30m',
   red:     '\x1b[31m',
   green:   '\x1b[32m',
@@ -51,7 +50,6 @@ const C = {
   magenta: '\x1b[35m',
   cyan:    '\x1b[36m',
   white:   '\x1b[37m',
-  // Bright
   bred:    '\x1b[91m',
   bgreen:  '\x1b[92m',
   byellow: '\x1b[93m',
@@ -59,11 +57,9 @@ const C = {
   bmagenta:'\x1b[95m',
   bcyan:   '\x1b[96m',
   bwhite:  '\x1b[97m',
-  // Background
   bgBlue:  '\x1b[44m',
   bgMagenta:'\x1b[45m',
   bgBlack: '\x1b[40m',
-  // Special
   clear:   '\x1b[2J\x1b[H',
   hideCursor: '\x1b[?25l',
   showCursor: '\x1b[?25h',
@@ -79,36 +75,89 @@ const Term = {
     return process.env.TERM !== 'dumb' && process.stdout.isTTY;
   },
 
-  wrap(text, maxWidth) {
-    maxWidth = maxWidth || (this.width - 4);
-    if (maxWidth < 20) maxWidth = 20;
-    const words = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\s+/);
-    const lines = [];
-    let line = '';
-    for (const word of words) {
-      if ((line + ' ' + word).trim().length > maxWidth) {
-        if (line) lines.push(line);
-        line = word;
-      } else {
-        line = line ? line + ' ' + word : word;
-      }
-    }
-    if (line) lines.push(line);
-    return lines.join('\n');
-  },
-
-  progressBar(current, total, width = 20) {
-    const ratio = Math.min(current / total, 1);
-    const filled = Math.round(ratio * width);
-    const empty = width - filled;
-    const bar = C.bmagenta + '\u2588'.repeat(filled) + C.dim + '\u2591'.repeat(empty) + C.reset;
-    return `[${bar}] ${Math.round(ratio * 100)}%`;
-  },
-
   divider(char = '\u2500', color = C.dim) {
     return color + char.repeat(Math.min(this.width - 2, 60)) + C.reset;
   }
 };
+
+// ─── .env Manager ─────────────────────────────────────────────
+const EnvManager = {
+  envPath: path.join(__dirname, '.env'),
+
+  save(key, value) {
+    let content = '';
+    if (fs.existsSync(this.envPath)) {
+      content = fs.readFileSync(this.envPath, 'utf-8');
+    }
+
+    const lines = content.split('\n');
+    let found = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      if (trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const existingKey = trimmed.slice(0, eqIdx).trim();
+      if (existingKey === key) {
+        lines[i] = `${key}=${value}`;
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      lines.push(`${key}=${value}`);
+    }
+
+    fs.writeFileSync(this.envPath, lines.join('\n') + '\n');
+    process.env[key] = value;
+  },
+
+  get(key) {
+    return process.env[key] || null;
+  }
+};
+
+// ─── API Key Validator ────────────────────────────────────────
+async function validateApiKey(apiKey) {
+  try {
+    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        model: CONFIG.model,
+        messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: 5,
+        temperature: 0.1
+      })
+    });
+
+    if (response.ok) {
+      return { valid: true };
+    }
+
+    const body = await response.text();
+    if (response.status === 403) {
+      return { valid: false, error: 'Authorization failed — key is invalid or expired' };
+    }
+    if (response.status === 429) {
+      // Rate limited but key IS valid
+      return { valid: true };
+    }
+    if (response.status === 401) {
+      return { valid: false, error: 'Unauthorized — check your API key format' };
+    }
+    return { valid: false, error: `HTTP ${response.status}: ${body.slice(0, 100)}` };
+  } catch (error) {
+    // Network error — can't validate, but let it through
+    return { valid: true, warning: 'Could not validate key (network error)' };
+  }
+}
 
 // ─── Agent States ─────────────────────────────────────────────
 const AGENT_STATE = {
@@ -117,6 +166,7 @@ const AGENT_STATE = {
   THINKING: 'thinking',
   EXECUTING: 'executing',
   WAITING_INPUT: 'waiting_input',
+  NEEDS_API_KEY: 'needs_api_key',
   ERROR: 'error',
   SHUTTING_DOWN: 'shutting_down'
 };
@@ -146,7 +196,8 @@ class NexusAgent {
       onToolResult: options.onToolResult || (() => {}),
       onToolStart: options.onToolStart || (() => {}),
       onMessage: options.onMessage || (() => {}),
-      onError: options.onError || (() => {})
+      onError: options.onError || (() => {}),
+      onNeedsApiKey: options.onNeedsApiKey || (() => {}),
     };
 
     this.consolidationInterval = null;
@@ -157,24 +208,36 @@ class NexusAgent {
     try {
       this._setState(AGENT_STATE.INITIALIZING);
 
+      // ─── API Key Check ────────────────────────────────────
       if (!this.apiKey) {
-        throw new Error(
-          'NVIDIA_API_KEY not set.\n' +
-          'Get a free key at: https://build.nvidia.com/\n' +
-          'Then run: export NVIDIA_API_KEY="your-key-here"'
-        );
+        this._setState(AGENT_STATE.NEEDS_API_KEY);
+        this.eventHandlers.onNeedsApiKey('No API key found');
+        return false;
       }
 
+      // ─── Validate API Key ─────────────────────────────────
+      this.eventHandlers.onStateChange('validating', AGENT_STATE.INITIALIZING);
+      const validation = await validateApiKey(this.apiKey);
+
+      if (!validation.valid) {
+        this._setState(AGENT_STATE.NEEDS_API_KEY);
+        this.eventHandlers.onNeedsApiKey(validation.error);
+        return false;
+      }
+
+      // ─── Initialize LLM ───────────────────────────────────
       this.llm = new LLMClient(this.apiKey, { maxTokens: 4096, temperature: 0.7 });
 
+      // ─── Initialize Tools ─────────────────────────────────
       this.tools = new ToolRegistry();
       this.executor = new ToolExecutor({ sandboxDir: this.workingDir, defaultTimeout: 30000 });
-
       this._connectMemoryTool();
 
+      // ─── Initialize Memory ────────────────────────────────
       this.memory = new MemorySystem(path.join(this.dataDir, 'memory'));
       this.memory.initialize();
 
+      // ─── Initialize Coordinator ───────────────────────────
       this.coordinator = new Coordinator(this.llm, (name, params, opts) =>
         this.executor.execute(name, params, opts), {
         maxWorkers: 2,
@@ -184,6 +247,7 @@ class NexusAgent {
       this.systemPrompt = this._buildSystemPrompt();
       this.coordinator.systemPrompt = this.systemPrompt;
 
+      // ─── Start Dream Cycle ────────────────────────────────
       this.consolidationInterval = setInterval(() => {
         this._runConsolidation();
       }, this.consolidationFrequency);
@@ -203,7 +267,42 @@ class NexusAgent {
     }
   }
 
+  // ─── Set new API key and restart ────────────────────────
+  async setApiKey(newKey) {
+    const trimmed = newKey.trim();
+
+    // Basic format check
+    if (!trimmed || trimmed.length < 10) {
+      return { success: false, error: 'Key too short — must be a valid NVIDIA API key' };
+    }
+
+    // Validate against API
+    const validation = await validateApiKey(trimmed);
+
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+
+    // Save to .env and memory
+    this.apiKey = trimmed;
+    EnvManager.save('NVIDIA_API_KEY', trimmed);
+
+    // Now fully initialize
+    return await this.start();
+  }
+
   async processMessage(userMessage) {
+    // If we need an API key, handle that first
+    if (this.state === AGENT_STATE.NEEDS_API_KEY) {
+      const result = await this.setApiKey(userMessage);
+      if (result === false || result?.success === false) {
+        this.eventHandlers.onError(new Error(result?.error || 'Invalid API key'));
+        return result?.error || 'Invalid API key. Try again.';
+      }
+      this.eventHandlers.onMessage('API key validated and saved. Agent is ready.');
+      return 'API key validated and saved. Agent is ready.';
+    }
+
     this._setState(AGENT_STATE.THINKING);
 
     try {
@@ -227,9 +326,7 @@ class NexusAgent {
           stream: true,
           onToken: (token) => this.eventHandlers.onToken(token),
           onToolResult: (result) => this.eventHandlers.onToolResult(result),
-          onSummarizationNeeded: async (history, tokens) => {
-            this._autoSummarize();
-          }
+          onSummarizationNeeded: async () => { this._autoSummarize(); }
         }
       );
 
@@ -245,6 +342,15 @@ class NexusAgent {
       return result.content;
 
     } catch (error) {
+      // If we get 403 during execution, key became invalid
+      if (error.message && error.message.includes('403')) {
+        this.apiKey = null;
+        EnvManager.save('NVIDIA_API_KEY', '');
+        this._setState(AGENT_STATE.NEEDS_API_KEY);
+        this.eventHandlers.onNeedsApiKey('API key rejected (403). Enter a new key:');
+        return 'API key rejected. Please enter a new NVIDIA API key:';
+      }
+
       this._setState(AGENT_STATE.ERROR);
       this.eventHandlers.onError(error);
       return `Error: ${error.message}`;
@@ -299,7 +405,13 @@ class NexusAgent {
         `${C.cyan}Messages:${C.reset}  ${s.conversationLength}`,
         `${C.cyan}API Calls:${C.reset} ${s.apiRequests}`,
         `${C.cyan}Work Dir:${C.reset}  ${s.workingDir}`,
+        `${C.cyan}API Key:${C.reset}   ${this.apiKey ? C.bgreen + '\u2713 saved' : C.bred + '\u2717 missing'}${C.reset}`,
       ].join('\n');
+    }
+
+    if (cmd === '/apikey') {
+      this._setState(AGENT_STATE.NEEDS_API_KEY);
+      return `${C.byellow}Enter your new NVIDIA API key:${C.reset}`;
     }
 
     if (cmd === '/memory') {
@@ -327,6 +439,7 @@ class NexusAgent {
       return [
         `${C.bmagenta}${C.bold}NEXUS Commands${C.reset}`,
         `${C.bcyan}/status${C.reset}     Show agent status`,
+        `${C.bcyan}/apikey${C.reset}     Change API key`,
         `${C.bcyan}/memory${C.reset}     Show memory stats`,
         `${C.bcyan}/consolidate${C.reset} Run memory consolidation`,
         `${C.bcyan}/clear${C.reset}      Clear conversation history`,
@@ -347,12 +460,13 @@ class NexusAgent {
 
   _stateLabel(state) {
     const labels = {
-      initializing: `${C.byellow}\u25CB initializing${C.reset}`,
-      idle:         `${C.bgreen}\u25CF idle${C.reset}`,
-      thinking:     `${C.bcyan}\u25CC thinking${C.reset}`,
-      executing:    `${C.bmagenta}\u25CE executing${C.reset}`,
-      error:        `${C.bred}\u25CF error${C.reset}`,
-      shutting_down:`${C.dim}\u25CB shutting down${C.reset}`,
+      initializing:   `${C.byellow}\u25CB initializing${C.reset}`,
+      idle:           `${C.bgreen}\u25CF idle${C.reset}`,
+      thinking:       `${C.bcyan}\u25CC thinking${C.reset}`,
+      executing:      `${C.bmagenta}\u25CE executing${C.reset}`,
+      needs_api_key:  `${C.bred}\u25CF needs API key${C.reset}`,
+      error:          `${C.bred}\u25CF error${C.reset}`,
+      shutting_down:  `${C.dim}\u25CB shutting down${C.reset}`,
     };
     return labels[state] || state;
   }
@@ -421,15 +535,13 @@ ${C.bmagenta}${C.bold} | \\ | || \\ | || __)/ __|| __|| _ \\/ __|${C.reset}
 ${C.bmagenta}${C.bold} |  \\| ||  \\| || _| \\__ \\| _| |   /\\__ \\${C.reset}
 ${C.bmagenta}${C.bold} |_|\\_||_|\\_|||___||___/|___||_|_\\|___/${C.reset}
 
-${C.dim}  Autonomous Agent v1.0${C.reset}
+${C.dim}  Autonomous Agent v1.1${C.reset}
 ${C.cyan}  Mistral Small 4 \u00B7 NVIDIA API \u00B7 ${env}${C.reset}
 
 ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
 `);
 
   // ─── Create Agent ────────────────────────────────────────
-  let currentLine = '';
-  let toolCount = 0;
   let isStreaming = false;
 
   const agent = new NexusAgent({
@@ -440,8 +552,13 @@ ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
         process.stdout.write(`\n${C.bcyan}\u25CC Thinking...${C.reset}\n`);
       }
       if (newState === AGENT_STATE.EXECUTING) {
-        toolCount = 0;
         process.stdout.write(`${C.bmagenta}\u25CE Executing${C.reset}\n`);
+      }
+      if (newState === AGENT_STATE.NEEDS_API_KEY) {
+        process.stdout.write(`\n${C.bred}\u25CF API Key Required${C.reset}\n`);
+      }
+      if (newState === 'validating') {
+        process.stdout.write(`${C.dim}  Validating API key...${C.reset}\r`);
       }
       if (newState === AGENT_STATE.IDLE && isStreaming) {
         process.stdout.write('\n');
@@ -455,50 +572,50 @@ ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
       }
       process.stdout.write(token);
     },
-    onToolStart: (toolName) => {
-      toolCount++;
-      process.stdout.write(`${C.dim}  \u2192 ${C.cyan}${toolName}${C.dim}...${C.reset}\r`);
-    },
     onToolResult: (result) => {
       const icon = result.success ? `${C.bgreen}\u2713${C.reset}` : `${C.bred}\u2717${C.reset}`;
       const time = result.executionTime > 1000
         ? `${(result.executionTime / 1000).toFixed(1)}s`
         : `${result.executionTime}ms`;
-      process.stdout.write(`  ${icon} ${C.cyan}${result.name}${C.reset} ${C.dim}${time}${C.reset}  \n`);
+      process.stdout.write(`  ${icon} ${C.cyan}${result.name}${C.reset} ${C.dim}${time}${C.reset}\n`);
     },
     onError: (error) => {
       process.stdout.write(`\n${C.bred}\u2717 ${error.message}${C.reset}\n`);
     },
     onMessage: (msg) => {
       if (!isStreaming) {
-        // Non-streamed message (meta-command result)
         process.stdout.write(`${msg}\n`);
       }
+    },
+    onNeedsApiKey: (reason) => {
+      process.stdout.write(`${C.byellow}${reason}${C.reset}\n`);
     }
   });
 
   // ─── Initialize ──────────────────────────────────────────
-  try {
-    process.stdout.write(`${C.dim}  Initializing...${C.reset}\r`);
+  const started = await agent.start();
 
-    await agent.start();
-
+  if (started) {
     const memStats = agent.memory.getStats();
     process.stdout.write(`${C.bgreen}\u2713${C.reset} Ready  `);
     process.stdout.write(`${C.dim}| ${C.cyan}${memStats.totalFacts}${C.reset} facts  `);
     process.stdout.write(`${C.dim}| ${C.cyan}${CONFIG.model.split('/').pop()}${C.reset}\n`);
     process.stdout.write(`${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}\n`);
-
-  } catch (error) {
-    process.stdout.write(`\n${C.bred}\u2717 ${error.message}${C.reset}\n\n`);
-    process.exit(1);
+  } else {
+    // Needs API key — show instructions
+    process.stdout.write(`\n${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}\n`);
+    process.stdout.write(`${C.byellow}Get a free NVIDIA API key:${C.reset}\n`);
+    process.stdout.write(`${C.cyan}  https://build.nvidia.com/${C.reset}\n`);
+    process.stdout.write(`${C.byellow}Then paste it below:${C.reset}\n\n`);
   }
 
   // ─── REPL ────────────────────────────────────────────────
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: `${C.bmagenta}\u25B8${C.reset} `,
+    prompt: agent.state === AGENT_STATE.NEEDS_API_KEY
+      ? `${C.byellow}api-key>${C.reset} `
+      : `${C.bmagenta}\u25B8${C.reset} `,
     historySize: 100,
     removeHistoryDuplicates: true
   });
@@ -516,6 +633,14 @@ ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
         process.stdout.write(`${C.dim}Goodbye.${C.reset}\n`);
         process.exit(0);
       }
+
+      // Update prompt based on state
+      if (agent.state === AGENT_STATE.NEEDS_API_KEY) {
+        rl.setPrompt(`${C.byellow}api-key>${C.reset} `);
+      } else {
+        rl.setPrompt(`${C.bmagenta}\u25B8${C.reset} `);
+      }
+
     } catch (error) {
       process.stdout.write(`${C.bred}Error: ${error.message}${C.reset}\n`);
     }
@@ -534,7 +659,6 @@ ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
     process.exit(0);
   });
 
-  // Handle terminal resize
   process.stdout.on('resize', () => {
     Term.width = process.stdout.columns || 80;
     Term.height = process.stdout.rows || 24;
@@ -549,8 +673,21 @@ async function startWebServer(agent, port = 8080) {
   const htmlPath = path.join(__dirname, 'web', 'index.html');
 
   const server = http.createServer(async (req, res) => {
+    // CORS headers
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    };
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, corsHeaders);
+      res.end();
+      return;
+    }
+
     if (req.url === '/' || req.url === '/index.html') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders });
       res.end(fs.readFileSync(htmlPath, 'utf-8'));
       return;
     }
@@ -562,18 +699,36 @@ async function startWebServer(agent, port = 8080) {
         try {
           const { message } = JSON.parse(body);
           const response = await agent.processMessage(message);
-          res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', ...corsHeaders });
           res.end(response);
         } catch (error) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.writeHead(500, { 'Content-Type': 'application/json', ...corsHeaders });
           res.end(JSON.stringify({ error: error.message }));
         }
       });
       return;
     }
 
+    // New: Set API key from web
+    if (req.url === '/api/apikey' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const { apikey } = JSON.parse(body);
+          const result = await agent.setApiKey(apikey);
+          res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
+          res.end(JSON.stringify({ success: !!result || result?.success, error: result?.error || null }));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json', ...corsHeaders });
+          res.end(JSON.stringify({ success: false, error: error.message }));
+        }
+      });
+      return;
+    }
+
     if (req.url === '/api/status' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
       res.end(JSON.stringify(agent.getStats()));
       return;
     }
@@ -582,8 +737,8 @@ async function startWebServer(agent, port = 8080) {
       const url = new URL(req.url, `http://localhost:${port}`);
       const query = url.searchParams.get('q') || '';
       const type = url.searchParams.get('type') || 'all';
-      const results = agent.memory.query(query, type, 10);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      const results = agent.memory?.query(query, type, 10) || [];
+      res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
       res.end(JSON.stringify(results));
       return;
     }
@@ -630,6 +785,7 @@ ${C.cyan}Environment:${C.reset}
 
 ${C.cyan}CLI Commands:${C.reset}
   /status      ${C.dim}Agent status${C.reset}
+  /apikey      ${C.dim}Change API key${C.reset}
   /memory      ${C.dim}Memory stats${C.reset}
   /consolidate ${C.dim}Run consolidation${C.reset}
   /clear       ${C.dim}Clear history${C.reset}
@@ -648,4 +804,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { NexusAgent, AGENT_STATE, startCLI, startWebServer, C, Term };
+module.exports = { NexusAgent, AGENT_STATE, startCLI, startWebServer, C, Term, EnvManager };
