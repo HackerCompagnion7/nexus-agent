@@ -764,9 +764,33 @@
     }
   }
 
-  function saveApiKey(key) {
-    state.apiKey = key;
-    localStorage.setItem('nexus_apikey', key);
+  async function saveApiKey(key) {
+    if (!key || key.length < 10) return;
+
+    // Try to save via server (which validates it)
+    try {
+      const res = await fetch(`${state.serverUrl}/api/apikey`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apikey: key })
+      });
+      const data = await res.json();
+      if (data.success) {
+        state.apiKey = key;
+        localStorage.setItem('nexus_apikey', key);
+        addMessage('system', 'API key validated and saved. Agent is ready.');
+        statusDot.className = 'status-dot';
+        // Reload page to refresh connection
+        setTimeout(() => location.reload(), 500);
+      } else {
+        addMessage('system', `API key invalid: ${data.error}`);
+      }
+    } catch (error) {
+      // Server not running — save locally and hope
+      state.apiKey = key;
+      localStorage.setItem('nexus_apikey', key);
+      addMessage('system', 'Key saved locally. Will be used on next connection.');
+    }
   }
 
   // Save server URL on change
