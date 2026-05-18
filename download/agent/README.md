@@ -1,6 +1,6 @@
 # NEXUS — Autonomous AI Agent
 
-Autonomous agent powered by **Mistral Small** via NVIDIA API. Built for **Termux/Android** with zero external dependencies.
+Autonomous agent powered by **Mistral Small** via Mistral API. Built for **Termux/Android** with zero external dependencies.
 
 ## Quick Start
 
@@ -8,8 +8,8 @@ Autonomous agent powered by **Mistral Small** via NVIDIA API. Built for **Termux
 # 1. Install
 bash install.sh
 
-# 2. Set API key (free at https://build.nvidia.com/)
-export NVIDIA_API_KEY="nvapi-your-key"
+# 2. Set API key (get at https://console.mistral.ai/)
+export MISTRAL_API_KEY="your-key"
 
 # 3. Run CLI
 node index.js
@@ -48,7 +48,7 @@ node index.js --web
 ## Requirements
 
 - Node.js 18+ (zero npm dependencies)
-- NVIDIA API key (free)
+- Mistral API key
 
 ## License
 

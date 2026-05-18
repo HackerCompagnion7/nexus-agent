@@ -270,7 +270,7 @@ body{
       <div class="logo">J</div>
       <div>
         <div class="hdr-t">JARVIS</div>
-        <div class="hdr-s" id="sub">Mistral Small · NVIDIA</div>
+        <div class="hdr-s" id="sub">Mistral Small · api.mistral.ai</div>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
@@ -286,11 +286,11 @@ body{
     <div class="setup" id="setupScreen">
       <div class="setup-logo">J</div>
       <h2>JARVIS</h2>
-      <p>Autonomous voice agent. Enter your NVIDIA API key to start.</p>
+      <p>Autonomous voice agent. Enter your Mistral API key to start.</p>
       <input type="password" class="setup-input" id="setupKey"
-        placeholder="nvapi-..." onkeydown="if(event.key==='Enter')submitKey()">
+        placeholder="your-mistral-api-key" onkeydown="if(event.key==='Enter')submitKey()">
       <button class="setup-btn" onclick="submitKey()">Activate</button>
-      <a class="setup-link" href="https://build.nvidia.com/" target="_blank">Get free API key</a>
+      <a class="setup-link" href="https://console.mistral.ai/" target="_blank">Get API key</a>
     </div>
   </main>
 
@@ -324,7 +324,7 @@ body{
   <div class="panel-t">Settings</div>
   <div class="sg">
     <div class="sl">API Key</div>
-    <input type="password" class="si" id="akI" placeholder="nvapi-..." onchange="saveKey(this.value)">
+    <input type="password" class="si" id="akI" placeholder="your-mistral-api-key" onchange="saveKey(this.value)">
   </div>
   <div class="sg">
     <div class="sl">Server URL</div>

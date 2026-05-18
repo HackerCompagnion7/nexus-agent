@@ -87,14 +87,14 @@ echo -e "${GREEN}✓${NC} Project structure ready"
 # ─── Step 5: Configure API Key ──────────────────────────────
 echo -e "${BOLD}[4/5]${NC} API Key configuration..."
 echo ""
-echo -e "  Get your ${BOLD}free${NC} NVIDIA API key at:"
-echo -e "  ${CYAN}https://build.nvidia.com/${NC}"
+echo -e "  Get your Mistral API key at:"
+echo -e "  ${CYAN}https://console.mistral.ai/${NC}"
 echo ""
 
-if [ -n "$NVIDIA_API_KEY" ]; then
-    echo -e "${GREEN}✓${NC} NVIDIA_API_KEY already set in environment"
+if [ -n "$MISTRAL_API_KEY" ]; then
+    echo -e "${GREEN}✓${NC} MISTRAL_API_KEY already set in environment"
 else
-    echo -n "  Enter your NVIDIA API key (or press Enter to set later): "
+    echo -n "  Enter your Mistral API key (or press Enter to set later): "
     read -r API_KEY_INPUT
 
     if [ -n "$API_KEY_INPUT" ]; then
@@ -106,13 +106,13 @@ else
 
         echo "" >> "$SHELL_RC"
         echo "# NEXUS Agent" >> "$SHELL_RC"
-        echo "export NVIDIA_API_KEY=\"$API_KEY_INPUT\"" >> "$SHELL_RC"
-        export NVIDIA_API_KEY="$API_KEY_INPUT"
+        echo "export MISTRAL_API_KEY=\"$API_KEY_INPUT\"" >> "$SHELL_RC"
+        export MISTRAL_API_KEY="$API_KEY_INPUT"
 
         echo -e "${GREEN}✓${NC} API key saved to $SHELL_RC"
     else
         echo -e "${YELLOW}⚠${NC} No API key set. Set it with:"
-        echo -e "  ${CYAN}export NVIDIA_API_KEY=\"your-key-here\"${NC}"
+        echo -e "  ${CYAN}export MISTRAL_API_KEY=\"your-key-here\"${NC}"
     fi
 fi
 
@@ -143,7 +143,7 @@ else
     echo -e "${GREEN}✓${NC} llm.js found"
 fi
 
-if [ -z "$NVIDIA_API_KEY" ]; then
+if [ -z "$MISTRAL_API_KEY" ]; then
     echo -e "${YELLOW}⚠${NC} API key not set (required for first run)"
 fi
 

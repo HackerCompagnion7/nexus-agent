@@ -122,7 +122,7 @@ const EnvManager = {
 // ─── API Key Validator ────────────────────────────────────────
 async function validateApiKey(apiKey) {
   try {
-    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -174,7 +174,7 @@ const AGENT_STATE = {
 // ─── Nexus Agent ──────────────────────────────────────────────
 class NexusAgent {
   constructor(options = {}) {
-    this.apiKey = options.apiKey || process.env.NVIDIA_API_KEY;
+    this.apiKey = options.apiKey || process.env.MISTRAL_API_KEY;
     this.dataDir = options.dataDir || path.join(process.cwd(), 'data');
     this.workingDir = options.workingDir || process.cwd();
     this.state = AGENT_STATE.INITIALIZING;
@@ -273,7 +273,7 @@ class NexusAgent {
 
     // Basic format check
     if (!trimmed || trimmed.length < 10) {
-      return { success: false, error: 'Key too short — must be a valid NVIDIA API key' };
+      return { success: false, error: 'Key too short — must be a valid Mistral API key' };
     }
 
     // Validate against API
@@ -285,7 +285,7 @@ class NexusAgent {
 
     // Save to .env and memory
     this.apiKey = trimmed;
-    EnvManager.save('NVIDIA_API_KEY', trimmed);
+    EnvManager.save('MISTRAL_API_KEY', trimmed);
 
     // Now fully initialize
     return await this.start();
@@ -345,10 +345,10 @@ class NexusAgent {
       // If we get 403 during execution, key became invalid
       if (error.message && error.message.includes('403')) {
         this.apiKey = null;
-        EnvManager.save('NVIDIA_API_KEY', '');
+        EnvManager.save('MISTRAL_API_KEY', '');
         this._setState(AGENT_STATE.NEEDS_API_KEY);
         this.eventHandlers.onNeedsApiKey('API key rejected (403). Enter a new key:');
-        return 'API key rejected. Please enter a new NVIDIA API key:';
+        return 'API key rejected. Please enter a new Mistral API key:';
       }
 
       this._setState(AGENT_STATE.ERROR);
@@ -411,7 +411,7 @@ class NexusAgent {
 
     if (cmd === '/apikey') {
       this._setState(AGENT_STATE.NEEDS_API_KEY);
-      return `${C.byellow}Enter your new NVIDIA API key:${C.reset}`;
+      return `${C.byellow}Enter your new Mistral API key:${C.reset}`;
     }
 
     if (cmd === '/memory') {
@@ -536,7 +536,7 @@ ${C.bmagenta}${C.bold} |  \\| ||  \\| || _| \\__ \\| _| |   /\\__ \\${C.reset}
 ${C.bmagenta}${C.bold} |_|\\_||_|\\_|||___||___/|___||_|_\\|___/${C.reset}
 
 ${C.dim}  JARVIS v2.0 — Voice + OCR + Persistence${C.reset}
-${C.cyan}  Mistral Small 4 \u00B7 NVIDIA API \u00B7 ${env}${C.reset}
+${C.cyan}  Mistral Small \u00B7 api.mistral.ai \u00B7 ${env}${C.reset}
 
 ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
 `);
@@ -604,8 +604,8 @@ ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
   } else {
     // Needs API key — show instructions
     process.stdout.write(`\n${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}\n`);
-    process.stdout.write(`${C.byellow}Get a free NVIDIA API key:${C.reset}\n`);
-    process.stdout.write(`${C.cyan}  https://build.nvidia.com/${C.reset}\n`);
+    process.stdout.write(`${C.byellow}Get your Mistral API key:${C.reset}\n`);
+    process.stdout.write(`${C.cyan}  https://console.mistral.ai/${C.reset}\n`);
     process.stdout.write(`${C.byellow}Then paste it below:${C.reset}\n\n`);
   }
 
@@ -796,7 +796,7 @@ ${C.cyan}Usage:${C.reset}
   node index.js --help     ${C.dim}Show this help${C.reset}
 
 ${C.cyan}Environment:${C.reset}
-  NVIDIA_API_KEY  ${C.dim}Required. Free at https://build.nvidia.com/${C.reset}
+  MISTRAL_API_KEY  ${C.dim}Required. Get at https://console.mistral.ai/${C.reset}
 
 ${C.cyan}CLI Commands:${C.reset}
   /status      ${C.dim}Agent status${C.reset}

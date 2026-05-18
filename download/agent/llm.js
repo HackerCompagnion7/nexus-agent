@@ -13,8 +13,8 @@
 
 // ─── Configuration ─────────────────────────────────────────────
 const CONFIG = {
-  baseURL: 'https://integrate.api.nvidia.com/v1',
-  model: 'mistralai/mistral-small-4-119b-2603',
+  baseURL: 'https://api.mistral.ai/v1',
+  model: 'mistral-small-latest',
   maxRetries: 3,
   retryBaseDelay: 1000,       // ms, exponential backoff base
   rateLimitWindow: 60000,     // 1 minute sliding window
@@ -102,7 +102,7 @@ class RetryHandler {
 class ToolCallParser {
   /**
    * Parses streaming tool call deltas into complete tool calls.
-   * Mistral/NVIDIA returns tool_calls as partial JSON fragments
+   * Mistral returns tool_calls as partial JSON fragments
    * across multiple SSE chunks.
    */
   static mergeDeltas(accumulated, delta) {
@@ -151,7 +151,7 @@ class ToolCallParser {
 // ─── Main LLM Client ─────────────────────────────────────────
 class LLMClient {
   constructor(apiKey, options = {}) {
-    if (!apiKey) throw new Error('[LLM] API key is required. Set NVIDIA_API_KEY env var.');
+    if (!apiKey) throw new Error('[LLM] API key is required. Set MISTRAL_API_KEY env var.');
     this.apiKey = apiKey;
     this.config = { ...CONFIG, ...options };
     this.rateLimiter = new RateLimiter(this.config.rateLimitMaxRequests, this.config.rateLimitWindow);

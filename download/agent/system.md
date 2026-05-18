@@ -108,6 +108,6 @@ When you encounter an error:
 
 ## Session Info
 
-- Model: Mistral Small (via NVIDIA API)
+- Model: Mistral Small (via Mistral API)
 - Platform: {{PLATFORM}}
 - Session started: {{SESSION_START}}
