@@ -1,6 +1,13 @@
-# NEXUS — Autonomous AI Agent
+# JARVIS — Autonomous Voice AI Agent
 
-Autonomous agent powered by **Mistral Small** via NVIDIA API. Built for **Termux/Android** with zero external dependencies.
+Voice-driven autonomous agent powered by **Mistral Small** via Mistral API. Built for **Termux/Android** with zero external dependencies.
+
+## Two Modes
+
+| Mode | How | Interface |
+|------|-----|-----------|
+| **CLI** | `node index.js` | Escribe comandos y tareas en Termux |
+| **Web** | `node index.js --web` | Solo voz — orbe, escuchar, hablar |
 
 ## Quick Start
 
@@ -8,13 +15,13 @@ Autonomous agent powered by **Mistral Small** via NVIDIA API. Built for **Termux
 # 1. Install
 bash install.sh
 
-# 2. Set API key (free at https://build.nvidia.com/)
-export NVIDIA_API_KEY="nvapi-your-key"
+# 2. Set API key (get at https://console.mistral.ai/)
+export MISTRAL_API_KEY="your-key"
 
-# 3. Run CLI
+# 3. Run CLI (escribir comandos)
 node index.js
 
-# 4. Run Web (mobile interface)
+# 4. Run Web (solo voz)
 node index.js --web
 ```
 
@@ -28,13 +35,14 @@ node index.js --web
 | `coordinator.js` | Multi-agent — task decomposition, parallel execution |
 | `index.js` | State machine — CLI, web server, agent loop |
 | `system.md` | System prompt — autonomous agent protocol |
-| `web/index.html` | Mobile PWA — dark theme, touch-optimized |
+| `web/index.html` | Voice-only PWA — orbe, speech recognition, TTS |
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
 | `/status` | Show agent status |
+| `/apikey` | Change API key |
 | `/memory` | Show memory stats |
 | `/consolidate` | Run memory consolidation |
 | `/clear` | Clear conversation history |
@@ -48,7 +56,7 @@ node index.js --web
 ## Requirements
 
 - Node.js 18+ (zero npm dependencies)
-- NVIDIA API key (free)
+- Mistral API key (https://console.mistral.ai/)
 
 ## License
 
