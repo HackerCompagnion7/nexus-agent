@@ -393,7 +393,180 @@ class NexusAgent {
   }
 
   _handleMetaCommand(message) {
-    const cmd = message.trim().toLowerCase();
+    const trimmed = message.trim();
+    const cmd = trimmed.toLowerCase();
+    const parts = trimmed.split(/\s+/);
+    const command = parts[0].toLowerCase();
+
+    // ─── File management commands ─────────────────────────
+    if (command === '/ls') {
+      const target = parts.slice(1).join(' ') || '.';
+      const dirPath = path.resolve(this.workingDir, target);
+      try {
+        if (!fs.existsSync(dirPath)) return `${C.bred}Directory not found: ${target}${C.reset}`;
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        if (entries.length === 0) return `${C.dim}Empty directory${C.reset}`;
+        return entries.map(e => {
+          const icon = e.isDirectory() ? `${C.bcyan}\uD83D\uDCC1${C.reset}` : `${C.dim}\uD83D\uDCC4${C.reset}`;
+          const stat = fs.statSync(path.join(dirPath, e.name));
+          const size = e.isFile() ? ` ${C.dim}${formatFileSize(stat.size)}${C.reset}` : '';
+          return `  ${icon} ${e.name}${size}`;
+        }).join('\n');
+      } catch (e) { return `${C.bred}Error: ${e.message}${C.reset}`; }
+    }
+
+    if (command === '/cd') {
+      const target = parts.slice(1).join(' ');
+      if (!target) return `${C.cyan}Current: ${this.workingDir}${C.reset}`;
+      const newPath = path.resolve(this.workingDir, target);
+      if (!fs.existsSync(newPath) || !fs.statSync(newPath).isDirectory()) {
+        return `${C.bred}Not a directory: ${target}${C.reset}`;
+      }
+      this.workingDir = newPath;
+      this.executor.sandboxDir = newPath;
+      return `${C.bgreen}Changed to: ${newPath}${C.reset}`;
+    }
+
+    if (command === '/cat') {
+      const target = parts.slice(1).join(' ');
+      if (!target) return `${C.byellow}Usage: /cat <file>${C.reset}`;
+      const filePath = path.resolve(this.workingDir, target);
+      try {
+        if (!fs.existsSync(filePath)) return `${C.bred}File not found: ${target}${C.reset}`;
+        const content = fs.readFileSync(filePath, 'utf-8');
+        if (content.length > 5000) return content.slice(0, 5000) + `\n${C.dim}... [truncated, ${content.length} chars total]${C.reset}`;
+        return content;
+      } catch (e) { return `${C.bred}Error: ${e.message}${C.reset}`; }
+    }
+
+    if (command === '/rm') {
+      const target = parts.slice(1).join(' ');
+      if (!target) return `${C.byellow}Usage: /rm <path>${C.reset}`;
+      const filePath = path.resolve(this.workingDir, target);
+      try {
+        if (!fs.existsSync(filePath)) return `${C.bred}Not found: ${target}${C.reset}`;
+        const stat = fs.statSync(filePath);
+        if (stat.isDirectory()) {
+          fs.rmdirSync(filePath);
+          return `${C.bgreen}Removed empty directory: ${target}${C.reset}`;
+        }
+        fs.unlinkSync(filePath);
+        return `${C.bgreen}Deleted: ${target}${C.reset}`;
+      } catch (e) { return `${C.bred}Error: ${e.message}${C.reset}`; }
+    }
+
+    if (command === '/mv') {
+      const src = parts[1], dst = parts[2];
+      if (!src || !dst) return `${C.byellow}Usage: /mv <source> <destination>${C.reset}`;
+      const srcPath = path.resolve(this.workingDir, src);
+      const dstPath = path.resolve(this.workingDir, dst);
+      try {
+        if (!fs.existsSync(srcPath)) return `${C.bred}Source not found: ${src}${C.reset}`;
+        fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+        fs.renameSync(srcPath, dstPath);
+        return `${C.bgreen}Moved: ${src} -> ${dst}${C.reset}`;
+      } catch (e) { return `${C.bred}Error: ${e.message}${C.reset}`; }
+    }
+
+    if (command === '/find') {
+      const pattern = parts.slice(1).join(' ');
+      if (!pattern) return `${C.byellow}Usage: /find <pattern>${C.reset}`;
+      try {
+        const results = [];
+        function searchDir(dir, depth) {
+          if (depth > 6 || results.length >= 30) return;
+          let entries;
+          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+          for (const entry of entries) {
+            if (results.length >= 30) break;
+            if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) { searchDir(fullPath, depth + 1); }
+            else if (entry.name.toLowerCase().includes(pattern.toLowerCase())) {
+              const stat = fs.statSync(fullPath);
+              results.push(`  ${C.cyan}${path.relative(this.workingDir, fullPath)}${C.reset} ${C.dim}${formatFileSize(stat.size)}${C.reset}`);
+            }
+          }
+        }
+        searchDir.call(this, this.workingDir, 0);
+        return results.length > 0 ? results.join('\n') : `${C.dim}No files matching "${pattern}"${C.reset}`;
+      } catch (e) { return `${C.bred}Error: ${e.message}${C.reset}`; }
+    }
+
+    if (command === '/space') {
+      try {
+        const entries = fs.readdirSync(this.workingDir, { withFileTypes: true });
+        let totalSize = 0;
+        const items = [];
+        for (const entry of entries) {
+          const fullPath = path.join(this.workingDir, entry.name);
+          try {
+            const stat = fs.statSync(fullPath);
+            if (entry.isFile()) {
+              totalSize += stat.size;
+              items.push({ name: entry.name, size: stat.size, type: 'file' });
+            } else if (entry.isDirectory()) {
+              const dirSize = getDirSize(fullPath);
+              totalSize += dirSize;
+              items.push({ name: entry.name, size: dirSize, type: 'dir' });
+            }
+          } catch {}
+        }
+        items.sort((a, b) => b.size - a.size);
+        const lines = [
+          `${C.bmagenta}${C.bold}Disk Usage: ${this.workingDir}${C.reset}`,
+          `${C.cyan}Total:${C.reset} ${formatFileSize(totalSize)}`,
+          '',
+        ];
+        for (const item of items.slice(0, 20)) {
+          const icon = item.type === 'dir' ? `${C.bcyan}\uD83D\uDCC1${C.reset}` : `${C.dim}\uD83D\uDCC4${C.reset}`;
+          const pct = totalSize > 0 ? ((item.size / totalSize) * 100).toFixed(1) : 0;
+          lines.push(`  ${icon} ${item.name}  ${C.dim}${formatFileSize(item.size)} (${pct}%)${C.reset}`);
+        }
+        return lines.join('\n');
+      } catch (e) { return `${C.bred}Error: ${e.message}${C.reset}`; }
+    }
+
+    if (command === '/organize') {
+      const target = parts.slice(1).join(' ') || '.';
+      const dirPath = path.resolve(this.workingDir, target);
+      try {
+        if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+          return `${C.bred}Not a directory: ${target}${C.reset}`;
+        }
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true }).filter(e => e.isFile());
+        if (entries.length === 0) return `${C.dim}No files to organize${C.reset}`;
+
+        const categories = {
+          'Imagenes': ['.jpg','.jpeg','.png','.gif','.bmp','.webp','.svg','.ico'],
+          'Videos': ['.mp4','.avi','.mkv','.mov','.wmv','.flv','.webm'],
+          'Musica': ['.mp3','.wav','.flac','.aac','.ogg','.m4a','.wma'],
+          'Documentos': ['.pdf','.doc','.docx','.txt','.rtf','.odt','.xls','.xlsx','.ppt','.pptx','.csv'],
+          'Codigo': ['.js','.ts','.py','.java','.c','.cpp','.h','.rb','.go','.rs','.html','.css','.json','.xml','.yml','.yaml','.sh','.bash'],
+          'Archivos': ['.zip','.rar','.7z','.tar','.gz','.bz2','.xz'],
+          'APKs': ['.apk','.aab'],
+          'Otros': []
+        };
+
+        let moved = 0;
+        for (const entry of entries) {
+          const ext = path.extname(entry.name).toLowerCase();
+          let category = 'Otros';
+          for (const [cat, exts] of Object.entries(categories)) {
+            if (exts.includes(ext)) { category = cat; break; }
+          }
+          const catDir = path.join(dirPath, category);
+          fs.mkdirSync(catDir, { recursive: true });
+          const srcPath = path.join(dirPath, entry.name);
+          const dstPath = path.join(catDir, entry.name);
+          if (!fs.existsSync(dstPath)) {
+            fs.renameSync(srcPath, dstPath);
+            moved++;
+          }
+        }
+        return `${C.bgreen}Organized ${moved} files into categories${C.reset}`;
+      } catch (e) { return `${C.bred}Error: ${e.message}${C.reset}`; }
+    }
 
     if (cmd === '/status' || cmd === '/stats') {
       const s = this.getStats();
@@ -437,16 +610,29 @@ class NexusAgent {
 
     if (cmd === '/help') {
       return [
-        `${C.bmagenta}${C.bold}NEXUS Commands${C.reset}`,
-        `${C.bcyan}/status${C.reset}     Show agent status`,
-        `${C.bcyan}/apikey${C.reset}     Change API key`,
-        `${C.bcyan}/memory${C.reset}     Show memory stats`,
-        `${C.bcyan}/consolidate${C.reset} Run memory consolidation`,
-        `${C.bcyan}/clear${C.reset}      Clear conversation history`,
-        `${C.bcyan}/help${C.reset}       Show this help`,
-        `${C.bcyan}/exit${C.reset}       Exit the agent`,
+        `${C.bmagenta}${C.bold}JARVIS Commands${C.reset}`,
         '',
-        `${C.dim}Or type your task and I'll execute it.${C.reset}`,
+        `${C.bcyan}General:${C.reset}`,
+        `${C.bcyan}/status${C.reset}      Agent status`,
+        `${C.bcyan}/apikey${C.reset}      Change API key`,
+        `${C.bcyan}/memory${C.reset}      Memory stats`,
+        `${C.bcyan}/consolidate${C.reset}  Run memory consolidation`,
+        `${C.bcyan}/clear${C.reset}       Clear conversation history`,
+        `${C.bcyan}/help${C.reset}        Show this help`,
+        `${C.bcyan}/exit${C.reset}        Exit the agent`,
+        '',
+        `${C.bcyan}File Management:${C.reset}`,
+        `${C.bcyan}/ls${C.reset} [path]   List directory contents`,
+        `${C.bcyan}/cd${C.reset} [path]   Change working directory`,
+        `${C.bcyan}/cat${C.reset} [file]  Read file contents`,
+        `${C.bcyan}/write${C.reset} [f]    Write to file (prompts for content)`,
+        `${C.bcyan}/rm${C.reset} [path]   Delete file or empty dir`,
+        `${C.bcyan}/mv${C.reset} [s] [d]  Move/rename file`,
+        `${C.bcyan}/find${C.reset} [pat]  Search for pattern in files`,
+        `${C.bcyan}/space${C.reset}       Show disk usage`,
+        `${C.bcyan}/organize${C.reset} [d] Organize directory by file type`,
+        '',
+        `${C.dim}Or type your task in natural language.${C.reset}`,
       ].join('\n');
     }
 
@@ -518,6 +704,33 @@ class NexusAgent {
   }
 }
 
+// ─── File Size Utilities ──────────────────────────────────────
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
+  return `${bytes.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function getDirSize(dirPath) {
+  let size = 0;
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      try {
+        if (entry.isFile()) {
+          size += fs.statSync(fullPath).size;
+        } else if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          size += getDirSize(fullPath);
+        }
+      } catch {}
+    }
+  } catch {}
+  return size;
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  TERMUX CLI — Native terminal experience
 // ═══════════════════════════════════════════════════════════════
@@ -530,12 +743,11 @@ async function startCLI() {
   console.log(`
 ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
 
-${C.bmagenta}${C.bold}  _   _  _   _  ___  ___  ___  ___  ___ ${C.reset}
-${C.bmagenta}${C.bold} | \\ | || \\ | || __)/ __|| __|| _ \\/ __|${C.reset}
-${C.bmagenta}${C.bold} |  \\| ||  \\| || _| \\__ \\| _| |   /\\__ \\${C.reset}
-${C.bmagenta}${C.bold} |_|\\_||_|\\_|||___||___/|___||_|_\\|___/${C.reset}
+${C.bmagenta}${C.bold}  ╦ ╦╔═╗╔╗ ╔═╗╦ ╦╔═╗╦  ╦  ${C.reset}
+${C.bmagenta}${C.bold}  ║║║║╣ ╠╩╗╚═╗╠═╣║╣ ║  ║  ${C.reset}
+${C.bmagenta}${C.bold}  ╚╩╝╚═╝╚═╝╚═╝╩ ╩╚═╝╩═╝╩═╝${C.reset}
 
-${C.dim}  Autonomous Agent v1.1${C.reset}
+${C.dim}  Autonomous Voice Agent v2.0${C.reset}
 ${C.cyan}  Mistral Small \u00B7 api.mistral.ai \u00B7 ${env}${C.reset}
 
 ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
@@ -748,7 +960,7 @@ async function startWebServer(agent, port = 8080) {
   });
 
   server.listen(port, '0.0.0.0', () => {
-    console.log(`[Nexus] Web: http://localhost:${port}`);
+    console.log(`[JARVIS] Web: http://localhost:${port}`);
   });
 
   return server;
@@ -772,7 +984,7 @@ async function main() {
     await startWebServer(agent, port);
   } else if (mode === '--help' || mode === '-h') {
     console.log(`
-${C.bmagenta}${C.bold}NEXUS${C.reset} \u2014 Autonomous Agent
+${C.bmagenta}${C.bold}JARVIS${C.reset} \u2014 Autonomous Voice Agent
 
 ${C.cyan}Usage:${C.reset}
   node index.js            ${C.dim}Start CLI mode (default)${C.reset}
@@ -785,10 +997,16 @@ ${C.cyan}Environment:${C.reset}
 
 ${C.cyan}CLI Commands:${C.reset}
   /status      ${C.dim}Agent status${C.reset}
+  /ls [path]   ${C.dim}List directory${C.reset}
+  /cd [path]   ${C.dim}Change directory${C.reset}
+  /cat [file]  ${C.dim}Read file${C.reset}
+  /rm [path]   ${C.dim}Delete file${C.reset}
+  /mv [s] [d]  ${C.dim}Move/rename file${C.reset}
+  /find [pat]  ${C.dim}Search files${C.reset}
+  /space       ${C.dim}Disk usage${C.reset}
+  /organize    ${C.dim}Organize by type${C.reset}
   /apikey      ${C.dim}Change API key${C.reset}
   /memory      ${C.dim}Memory stats${C.reset}
-  /consolidate ${C.dim}Run consolidation${C.reset}
-  /clear       ${C.dim}Clear history${C.reset}
   /help        ${C.dim}Show help${C.reset}
   /exit        ${C.dim}Exit${C.reset}
 `);

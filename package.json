@@ -1,7 +1,7 @@
 {
-  "name": "nexus-agent",
+  "name": "jarvis-agent",
   "version": "2.0.0",
-  "description": "JARVIS — Autonomous Voice AI Agent powered by Mistral Small via Mistral API",
+  "description": "JARVIS — Asistente de Voz Autónomo powered by Mistral Small via Mistral API",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -11,7 +11,7 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["jarvis", "agent", "autonomous", "mistral", "ai", "voice", "termux"],
+  "keywords": ["jarvis", "agent", "autonomous", "mistral", "ai", "voice", "termux", "pip"],
   "license": "MIT",
   "dependencies": {}
 }

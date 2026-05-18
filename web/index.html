@@ -90,7 +90,7 @@ body{
 /* ── ORB ────────────────────────────────── */
 .orb-container{position:relative;margin-bottom:24px}
 .orb{
-  width:140px;height:140px;border-radius:50%;
+  width:160px;height:160px;border-radius:50%;
   background:radial-gradient(circle at 35% 35%,var(--accent2),var(--accent),#3d2d8f);
   box-shadow:0 0 40px var(--glow),0 0 80px rgba(108,92,231,.15),
     inset 0 0 30px rgba(255,255,255,.05);
@@ -101,37 +101,62 @@ body{
 .orb:active{transform:scale(.95)}
 .orb.listening{
   animation:orbListen 1.5s ease-in-out infinite;
-  box-shadow:0 0 50px rgba(0,180,216,.5),0 0 100px rgba(0,180,216,.2),
+  box-shadow:0 0 60px rgba(0,180,216,.5),0 0 120px rgba(0,180,216,.2),
     inset 0 0 30px rgba(0,180,216,.1);
   background:radial-gradient(circle at 35% 35%,#00b4d8,#0077b6,#004e7c);
 }
 .orb.speaking{
   animation:orbSpeak 1s ease-in-out infinite;
-  box-shadow:0 0 50px rgba(168,85,247,.5),0 0 100px rgba(168,85,247,.2),
+  box-shadow:0 0 60px rgba(168,85,247,.5),0 0 120px rgba(168,85,247,.2),
     inset 0 0 30px rgba(168,85,247,.1);
   background:radial-gradient(circle at 35% 35%,var(--accent2),#9333ea,#6b21a8);
 }
 .orb.thinking{
   animation:orbThink 2s linear infinite;
-  box-shadow:0 0 50px rgba(255,165,2,.4),0 0 100px rgba(255,165,2,.15);
+  box-shadow:0 0 60px rgba(255,165,2,.4),0 0 120px rgba(255,165,2,.15);
   background:radial-gradient(circle at 35% 35%,var(--warn),#d97706,#92400e);
 }
 @keyframes orbListen{
-  0%,100%{transform:scale(1);box-shadow:0 0 50px rgba(0,180,216,.5)}
-  50%{transform:scale(1.06);box-shadow:0 0 70px rgba(0,180,216,.7)}
+  0%,100%{transform:scale(1);box-shadow:0 0 60px rgba(0,180,216,.5)}
+  50%{transform:scale(1.08);box-shadow:0 0 80px rgba(0,180,216,.7)}
 }
 @keyframes orbSpeak{
-  0%,100%{transform:scale(1);box-shadow:0 0 50px rgba(168,85,247,.5)}
-  50%{transform:scale(1.04);box-shadow:0 0 65px rgba(168,85,247,.7)}
+  0%,100%{transform:scale(1);box-shadow:0 0 60px rgba(168,85,247,.5)}
+  50%{transform:scale(1.05);box-shadow:0 0 75px rgba(168,85,247,.7)}
 }
 @keyframes orbThink{
   0%{transform:rotate(0deg)}
   100%{transform:rotate(360deg)}
 }
 
+/* Audio visualizer bars inside orb */
+.orb-visualizer{
+  display:flex;align-items:center;justify-content:center;
+  gap:3px;height:40px;
+}
+.orb-visualizer .bar{
+  width:4px;border-radius:2px;background:rgba(255,255,255,.7);
+  min-height:6px;transition:height .1s;
+}
+.orb.speaking .orb-visualizer .bar,
+.orb.listening .orb-visualizer .bar{
+  animation:barBounce .6s ease-in-out infinite alternate;
+}
+.orb-visualizer .bar:nth-child(1){animation-delay:0s}
+.orb-visualizer .bar:nth-child(2){animation-delay:.1s}
+.orb-visualizer .bar:nth-child(3){animation-delay:.2s}
+.orb-visualizer .bar:nth-child(4){animation-delay:.15s}
+.orb-visualizer .bar:nth-child(5){animation-delay:.05s}
+.orb-visualizer .bar:nth-child(6){animation-delay:.25s}
+.orb-visualizer .bar:nth-child(7){animation-delay:.12s}
+@keyframes barBounce{
+  0%{height:6px}
+  100%{height:36px}
+}
+
 /* Rings around orb */
 .orb-ring{
-  position:absolute;inset:-12px;border-radius:50%;
+  position:absolute;inset:-16px;border-radius:50%;
   border:2px solid rgba(0,180,216,.25);
   animation:ringExpand 2s ease-out infinite;
   opacity:0;z-index:1;pointer-events:none;
@@ -140,11 +165,8 @@ body{
 .orb-ring:nth-child(3){animation-delay:1.4s}
 .orb.listening~.orb-ring{opacity:1;border-color:rgba(0,180,216,.3)}
 .orb.speaking~.orb-ring{opacity:1;border-color:rgba(168,85,247,.3)}
-@keyframes ringExpand{0%{transform:scale(1);opacity:.5}100%{transform:scale(1.8);opacity:0}}
-
-.orb-icon{font-size:48px;color:#fff;pointer-events:none;filter:drop-shadow(0 0 8px rgba(255,255,255,.3))}
-.orb.listening .orb-icon{animation:iconPulse 1s ease-in-out infinite}
-@keyframes iconPulse{0%,100%{opacity:1}50%{opacity:.6}}
+.orb.thinking~.orb-ring{opacity:1;border-color:rgba(255,165,2,.2)}
+@keyframes ringExpand{0%{transform:scale(1);opacity:.5}100%{transform:scale(2);opacity:0}}
 
 /* ── STATUS TEXT ─────────────────────────── */
 .status{
@@ -181,18 +203,18 @@ body{
   flex-shrink:0;padding:12px 20px;
   padding-bottom:max(12px,env(safe-area-inset-bottom));
   background:var(--bg2);border-top:1px solid var(--border);
-  display:flex;align-items:center;justify-content:center;gap:16px;
+  display:flex;align-items:center;justify-content:center;gap:12px;
 }
 .bbtn{
-  padding:10px 20px;border:none;border-radius:24px;
-  background:var(--bg3);color:var(--text2);font-size:14px;
-  cursor:pointer;display:flex;align-items:center;gap:8px;
+  padding:10px 18px;border:none;border-radius:24px;
+  background:var(--bg3);color:var(--text2);font-size:13px;
+  cursor:pointer;display:flex;align-items:center;gap:6px;
   transition:.15s;font-weight:500;
 }
 .bbtn:active{transform:scale(.95)}
-.bbtn.on{background:rgba(0,180,216,.15);color:var(--cyan);border:1px solid rgba(0,180,216,.3)}
 .bbtn.mic-on{background:rgba(0,180,216,.2);color:var(--cyan);border:1px solid rgba(0,180,216,.3)}
 .bbtn.stop{background:rgba(255,71,87,.15);color:var(--err);border:1px solid rgba(255,71,87,.3)}
+.bbtn.auto-on{background:rgba(0,210,160,.15);color:var(--ok);border:1px solid rgba(0,210,160,.3)}
 
 /* ── PIP BUBBLE ─────────────────────────── */
 .pip{
@@ -207,6 +229,22 @@ body{
 .pip:active{transform:scale(.9)}
 .pip.show{display:flex}
 .pip.listening{animation:orbListen 1.5s ease-in-out infinite;background:linear-gradient(135deg,#00b4d8,#0077b6)}
+
+/* ── PIP WINDOW (Document PiP API) ───────── */
+.pip-win{
+  width:100%;height:100%;background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-family:system-ui;color:#fff;
+}
+.pip-win .pip-orb{
+  width:80px;height:80px;border-radius:50%;
+  background:radial-gradient(circle at 35% 35%,var(--accent2),var(--accent));
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;
+  box-shadow:0 0 30px var(--glow);
+  margin-bottom:8px;
+}
+.pip-win .pip-status{font-size:12px;color:var(--text2)}
 
 /* ── SETTINGS PANEL ─────────────────────── */
 .overlay{
@@ -266,6 +304,26 @@ body{
 }
 .setup-btn:active{transform:scale(.96)}
 .setup-link{color:var(--accent);font-size:13px;margin-top:12px}
+
+/* ── CONVERSATION LOG (swipe up) ──────────── */
+.log-panel{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:var(--bg);z-index:50;
+  transform:translateY(100%);transition:transform .3s ease-out;
+  display:flex;flex-direction:column;
+}
+.log-panel.open{transform:translateY(0)}
+.log-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.log-header h3{font-size:16px;font-weight:600}
+.log-body{flex:1;overflow-y:auto;padding:16px}
+.log-entry{margin-bottom:16px}
+.log-entry .le-role{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:2px}
+.log-entry .le-text{font-size:14px;color:var(--text);line-height:1.5}
+.log-entry .le-text.user{color:var(--cyan)}
+.log-entry .le-text.assistant{color:var(--text)}
 </style>
 </head>
 <body>
@@ -282,6 +340,7 @@ body{
     </div>
     <div style="display:flex;align-items:center;gap:8px">
       <div class="dot" id="dot"></div>
+      <button class="ib" onclick="toggleLog()" aria-label="History">&#9776;</button>
       <button class="ib" onclick="togglePanel()" aria-label="Settings">&#9881;</button>
     </div>
   </header>
@@ -290,7 +349,10 @@ body{
   <main class="voice-main" id="voiceMain" style="display:none">
     <div class="orb-container">
       <div class="orb" id="orb" onclick="toggleMic()">
-        <span class="orb-icon" id="orbIcon">&#127908;</span>
+        <div class="orb-visualizer" id="visualizer">
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+        </div>
       </div>
       <div class="orb-ring"></div>
       <div class="orb-ring"></div>
@@ -317,13 +379,25 @@ body{
   <!-- Bottom Bar -->
   <div class="bottom-bar" id="bottomBar" style="display:none">
     <button class="bbtn" id="micBtn" onclick="toggleMic()">&#127908; Mic</button>
-    <button class="bbtn" id="stopBtn" onclick="stopSpeaking()" style="display:none">&#9632; Detener</button>
+    <button class="bbtn" id="autoBtn" onclick="toggleAutoListen()">&#128259; Auto</button>
+    <button class="bbtn" id="stopBtn" onclick="stopSpeaking()" style="display:none">&#9632; Parar</button>
     <button class="bbtn" id="clearBtn" onclick="clearResponse()">&#128465; Limpiar</button>
   </div>
 </div>
 
 <!-- PiP Bubble -->
-<div class="pip" id="pip" onclick="window.focus()">&#127908;</div>
+<div class="pip" id="pip" onclick="focusApp()">&#127908;</div>
+
+<!-- Conversation Log Panel -->
+<div class="log-panel" id="logPanel">
+  <div class="log-header">
+    <h3>Historial</h3>
+    <button class="ib" onclick="toggleLog()">&times;</button>
+  </div>
+  <div class="log-body" id="logBody">
+    <div style="text-align:center;color:var(--text3);padding:40px 0">Sin historial a&uacute;n</div>
+  </div>
+</div>
 
 <!-- Settings Panel -->
 <div class="overlay" id="ov" onclick="togglePanel()"></div>
@@ -349,7 +423,17 @@ body{
       <option value="en-US">English</option>
       <option value="fr-FR">Fran&ccedil;ais</option>
       <option value="pt-BR">Portugu&ecirc;s</option>
+      <option value="it-IT">Italiano</option>
+      <option value="de-DE">Deutsch</option>
+      <option value="ja-JP">日本語</option>
+      <option value="zh-CN">中文</option>
     </select>
+  </div>
+  <div class="sg">
+    <div class="sl">Velocidad de voz</div>
+    <input type="range" class="si" id="rateSlider" min="0.5" max="2" step="0.1" value="1.05"
+      onchange="S.rate=parseFloat(this.value);localStorage.setItem('j_rate',this.value)"
+      style="padding:6px">
   </div>
   <div class="sg2">
     <div class="sc"><div class="sv" id="sState">&mdash;</div><div class="st">Estado</div></div>
@@ -360,21 +444,32 @@ body{
 </div>
 
 <script>
+// ═══════════════════════════════════════════════════════════
+//  JARVIS — Voice-Only Interface v2.0
+//  100% voice: SpeechRecognition input, SpeechSynthesis output
+//  PiP persistence, continuous listening mode, visualizer
+// ═══════════════════════════════════════════════════════════
+
 // ─── STATE ──────────────────────────────────
 const S = {
-  msgs: [], loading: false,
+  log: [],
+  loading: false,
   url: localStorage.getItem('j_srv') || 'http://localhost:8080',
   key: localStorage.getItem('j_key') || '',
   voice: localStorage.getItem('j_voice') || '',
   lang: localStorage.getItem('j_lang') || 'es-ES',
-  autoSpeak: true,
-  listening: false, speaking: false,
-  recognition: null, synth: window.speechSynthesis,
+  rate: parseFloat(localStorage.getItem('j_rate')) || 1.05,
+  autoListen: localStorage.getItem('j_auto') === 'true',
+  listening: false,
+  speaking: false,
+  recognition: null,
+  synth: window.speechSynthesis,
+  pipWindow: null,
+  wakeLock: null,
 };
 
 const dot = document.getElementById('dot');
 const orb = document.getElementById('orb');
-const orbIcon = document.getElementById('orbIcon');
 const statusEl = document.getElementById('status');
 const transcript = document.getElementById('transcript');
 const responseEl = document.getElementById('response');
@@ -384,13 +479,17 @@ const voiceMain = document.getElementById('voiceMain');
 const bottomBar = document.getElementById('bottomBar');
 const micBtn = document.getElementById('micBtn');
 const stopBtn = document.getElementById('stopBtn');
+const autoBtn = document.getElementById('autoBtn');
+const visualizer = document.getElementById('visualizer');
 
 // ─── INIT ───────────────────────────────────
 document.getElementById('srvI').value = S.url;
 document.getElementById('langSelect').value = S.lang;
+document.getElementById('rateSlider').value = S.rate;
 if (S.key) document.getElementById('akI').value = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
+if (S.autoListen) autoBtn.classList.add('auto-on');
 
-// Voices
+// ─── VOICES ─────────────────────────────────
 function loadVoices() {
   const sel = document.getElementById('voiceSelect');
   const voices = S.synth.getVoices();
@@ -406,7 +505,7 @@ function loadVoices() {
 loadVoices();
 S.synth.onvoiceschanged = loadVoices;
 
-// Check server on load
+// ─── CHECK SERVER ───────────────────────────
 checkServer();
 
 async function checkServer() {
@@ -417,6 +516,7 @@ async function checkServer() {
       showSetup();
     } else {
       showVoice();
+      updateStats(data);
     }
   } catch {
     if (!S.key) showSetup();
@@ -434,6 +534,13 @@ function showVoice() {
   setupScreen.style.display = 'none';
   voiceMain.style.display = 'flex';
   bottomBar.style.display = 'flex';
+}
+
+function updateStats(data) {
+  document.getElementById('sState').textContent = data.state || '\u2014';
+  document.getElementById('sFacts').textContent = data.memory?.totalFacts || 0;
+  document.getElementById('sReqs').textContent = data.apiRequests || 0;
+  document.getElementById('sMsgs').textContent = S.log.length;
 }
 
 // ─── API KEY SETUP ──────────────────────────
@@ -467,10 +574,13 @@ async function submitKey() {
     S.key = key;
     localStorage.setItem('j_key', key);
     showVoice();
+    speak('JARVIS en l\u00ednea. \u00bfEn qu\u00e9 puedo ayudarte?');
   }
 }
 
-// ─── SPEECH RECOGNITION ─────────────────────
+// ═══════════════════════════════════════════════════════════
+//  SPEECH RECOGNITION — Voice Input (100% voice, no typing)
+// ═══════════════════════════════════════════════════════════
 function initRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
@@ -492,7 +602,6 @@ function initRecognition() {
     orb.classList.add('listening');
     orb.classList.remove('speaking', 'thinking');
     dot.className = 'dot listen';
-    orbIcon.innerHTML = '&#128308;';
     statusEl.textContent = 'Escuchando...';
     statusEl.className = 'status active';
     transcript.textContent = '';
@@ -529,8 +638,11 @@ function initRecognition() {
       statusEl.textContent = 'Acceso al micr\u00f3fono denegado';
       statusEl.className = 'status thinking-text';
     } else if (e.error === 'no-speech') {
-      statusEl.textContent = 'No se detect\u00f3 voz. Toca para intentar de nuevo';
+      statusEl.textContent = 'No se detect\u00f3 voz. Toca para intentar';
       statusEl.className = 'status';
+    } else if (e.error === 'network') {
+      statusEl.textContent = 'Error de red. Verifica conexi\u00f3n';
+      statusEl.className = 'status thinking-text';
     } else if (e.error !== 'aborted') {
       console.log('Speech error:', e.error);
     }
@@ -540,13 +652,19 @@ function initRecognition() {
     S.listening = false;
     orb.classList.remove('listening');
     dot.className = 'dot';
-    orbIcon.innerHTML = '&#127908;';
     pip.classList.remove('listening');
     micBtn.classList.remove('mic-on');
 
     // If we got text, send it
     if (finalText.trim()) {
       sendVoice(finalText.trim());
+    } else if (S.autoListen && !S.loading && !S.speaking) {
+      // Auto-listen: restart after short pause
+      setTimeout(() => {
+        if (S.autoListen && !S.loading && !S.speaking) {
+          startListening();
+        }
+      }, 800);
     } else {
       statusEl.textContent = 'Toca el orbe para hablar';
       statusEl.className = 'status';
@@ -564,47 +682,69 @@ function resetRecognition() {
   }
 }
 
-function toggleMic() {
+function startListening() {
   if (!S.recognition) {
     S.recognition = initRecognition();
   }
   if (!S.recognition) return;
 
-  if (S.listening) {
-    S.listening = false;
+  stopSpeaking();
+  try {
+    S.recognition.start();
+  } catch (e) {
     S.recognition.stop();
-  } else {
-    // Stop speaking if speaking
-    stopSpeaking();
-    try { S.recognition.start(); } catch (e) {
-      S.recognition.stop();
-      setTimeout(() => { try { S.recognition.start(); } catch {} }, 200);
-    }
+    setTimeout(() => { try { S.recognition.start(); } catch {} }, 200);
   }
 }
 
-// ─── TEXT TO SPEECH ─────────────────────────
+function toggleMic() {
+  if (S.listening) {
+    S.listening = false;
+    if (S.recognition) try { S.recognition.stop(); } catch {}
+  } else {
+    startListening();
+  }
+}
+
+// ─── AUTO-LISTEN MODE ──────────────────────
+function toggleAutoListen() {
+  S.autoListen = !S.autoListen;
+  localStorage.setItem('j_auto', S.autoListen);
+  autoBtn.classList.toggle('auto-on', S.autoListen);
+
+  if (S.autoListen && !S.listening && !S.loading && !S.speaking) {
+    startListening();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TEXT TO SPEECH — Voice Output
+// ═══════════════════════════════════════════════════════════
 function speak(text) {
   if (!S.synth) return;
   S.synth.cancel();
 
+  // Clean text for TTS — remove code blocks, markdown
   const clean = text
-    .replace(/```[\s\S]*?```/g, ' bloque de c\u00f3digo ')
+    .replace(/```[\s\S]*?```/g, ' bloque de c\u00f3digo omitido ')
     .replace(/`[^`]+`/g, ' c\u00f3digo ')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/#{1,6}\s/g, '')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/[•\-]\s/g, '')
-    .slice(0, 600);
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, ', ')
+    .slice(0, 800);
 
   const utter = new SpeechSynthesisUtterance(clean);
-  utter.rate = 1.05;
+  utter.rate = S.rate;
   utter.pitch = 0.95;
 
   const voices = S.synth.getVoices();
   if (S.voice && voices[S.voice]) {
     utter.voice = voices[S.voice];
   } else {
+    // Prefer Google voices for the selected language
     const preferred = voices.find(v => v.name.includes('Google') && v.lang.startsWith(S.lang.slice(0,2)))
       || voices.find(v => v.name.includes('Google') && v.lang.startsWith('es'))
       || voices.find(v => v.lang.startsWith(S.lang.slice(0,2)))
@@ -619,20 +759,31 @@ function speak(text) {
     statusEl.textContent = 'Hablando...';
     statusEl.className = 'status speaking-text';
     stopBtn.style.display = 'flex';
+    updatePipWindow('speaking');
   };
+
   utter.onend = () => {
     S.speaking = false;
     orb.classList.remove('speaking');
     dot.className = 'dot';
-    statusEl.textContent = 'Toca el orbe para hablar';
-    statusEl.className = 'status';
     stopBtn.style.display = 'none';
+    updatePipWindow('idle');
+
+    // Auto-listen after speaking
+    if (S.autoListen && !S.loading) {
+      setTimeout(() => startListening(), 600);
+    } else {
+      statusEl.textContent = 'Toca el orbe para hablar';
+      statusEl.className = 'status';
+    }
   };
+
   utter.onerror = () => {
     S.speaking = false;
     orb.classList.remove('speaking');
     dot.className = 'dot';
     stopBtn.style.display = 'none';
+    updatePipWindow('idle');
   };
 
   S.synth.speak(utter);
@@ -644,13 +795,16 @@ function stopSpeaking() {
   orb.classList.remove('speaking');
   dot.className = 'dot';
   stopBtn.style.display = 'none';
+  updatePipWindow('idle');
   if (!S.listening) {
     statusEl.textContent = 'Toca el orbe para hablar';
     statusEl.className = 'status';
   }
 }
 
-// ─── SEND VOICE MESSAGE ────────────────────
+// ═══════════════════════════════════════════════════════════
+//  SEND VOICE MESSAGE — Core communication
+// ═══════════════════════════════════════════════════════════
 async function sendVoice(text) {
   if (S.loading) return;
 
@@ -665,6 +819,10 @@ async function sendVoice(text) {
   statusEl.textContent = 'Procesando...';
   statusEl.className = 'status thinking-text';
   micBtn.disabled = true;
+  updatePipWindow('thinking');
+
+  // Add to log
+  addLog('user', text);
 
   try {
     const res = await fetch(`${S.url}/api/chat`, {
@@ -677,7 +835,10 @@ async function sendVoice(text) {
 
     const data = await res.text();
     responseEl.innerHTML = fmt(data);
-    document.getElementById('sMsgs').textContent = ++S.msgs.length;
+    document.getElementById('sMsgs').textContent = S.log.length;
+
+    // Add to log
+    addLog('assistant', data);
 
     // Speak the response
     speak(data);
@@ -688,26 +849,206 @@ async function sendVoice(text) {
     dot.className = 'dot err';
     statusEl.textContent = 'Error de conexi\u00f3n';
     statusEl.className = 'status thinking-text';
+    updatePipWindow('error');
+    addLog('error', e.message);
   } finally {
     S.loading = false;
     orb.classList.remove('thinking');
     micBtn.disabled = false;
     if (!S.speaking) {
-      statusEl.textContent = 'Toca el orbe para hablar';
-      statusEl.className = 'status';
       dot.className = 'dot';
+      if (!S.autoListen) {
+        statusEl.textContent = 'Toca el orbe para hablar';
+        statusEl.className = 'status';
+      }
     }
   }
 }
 
-// ─── FORMAT ─────────────────────────────────
+// ─── CONVERSATION LOG ──────────────────────
+function addLog(role, text) {
+  S.log.push({ role, text, time: Date.now() });
+}
+
+function toggleLog() {
+  const panel = document.getElementById('logPanel');
+  const isOpen = panel.classList.contains('open');
+
+  if (isOpen) {
+    panel.classList.remove('open');
+  } else {
+    // Render log
+    const body = document.getElementById('logBody');
+    if (S.log.length === 0) {
+      body.innerHTML = '<div style="text-align:center;color:var(--text3);padding:40px 0">Sin historial a\u00fan</div>';
+    } else {
+      body.innerHTML = S.log.map(e => `
+        <div class="log-entry">
+          <div class="le-role">${e.role === 'user' ? 'T\u00fa' : e.role === 'error' ? 'Error' : 'JARVIS'}</div>
+          <div class="le-text ${e.role}">${e.role === 'assistant' ? fmt(e.text).slice(0, 300) : escHtml(e.text).slice(0, 300)}</div>
+        </div>
+      `).join('');
+      body.scrollTop = body.scrollHeight;
+    }
+    panel.classList.add('open');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PICTURE-IN-PICTURE — Background persistence
+// ═══════════════════════════════════════════════════════════
+async function enterPiP() {
+  // Try Document Picture-in-Picture API first (Chrome 116+)
+  if ('documentPictureInPicture' in window) {
+    try {
+      const pipWin = await documentPictureInPicture.requestWindow({
+        width: 200,
+        height: 200,
+      });
+
+      // Style the PiP window
+      const doc = pipWin.document;
+      doc.body.style.cssText = 'margin:0;padding:0;background:#0a0a0f;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;';
+
+      const orbDiv = doc.createElement('div');
+      orbDiv.id = 'pip-orb';
+      orbDiv.style.cssText = 'width:80px;height:80px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#a855f7,#6c5ce7);display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 0 30px rgba(108,92,231,.3);margin-bottom:8px;';
+      orbDiv.textContent = '\uD83C\uDF99\uFE0F';
+
+      const statusDiv = doc.createElement('div');
+      statusDiv.id = 'pip-status';
+      statusDiv.style.cssText = 'font-size:11px;color:#8b89a0;';
+      statusDiv.textContent = 'JARVIS';
+
+      const textDiv = doc.createElement('div');
+      textDiv.id = 'pip-text';
+      textDiv.style.cssText = 'font-size:12px;color:#e8e6f0;max-width:180px;text-align:center;margin-top:4px;padding:0 8px;max-height:60px;overflow:hidden;';
+
+      doc.body.appendChild(orbDiv);
+      doc.body.appendChild(statusDiv);
+      doc.body.appendChild(textDiv);
+
+      // Click PiP window to focus main window
+      doc.body.addEventListener('click', () => window.focus());
+
+      S.pipWindow = pipWin;
+      return;
+    } catch (e) {
+      console.log('Document PiP not available:', e);
+    }
+  }
+
+  // Fallback: Video PiP API
+  if ('pictureInPictureEnabled' in document) {
+    // We'd need a video element, skip for now
+  }
+
+  // Final fallback: CSS floating bubble
+  pip.classList.add('show');
+}
+
+function updatePipWindow(state) {
+  if (S.pipWindow && !S.pipWindow.closed) {
+    const doc = S.pipWindow.document;
+    const orbEl = doc.getElementById('pip-orb');
+    const statusEl2 = doc.getElementById('pip-status');
+    const textEl = doc.getElementById('pip-text');
+
+    if (orbEl) {
+      if (state === 'listening') {
+        orbEl.style.background = 'radial-gradient(circle at 35% 35%,#00b4d8,#0077b6)';
+        orbEl.style.boxShadow = '0 0 40px rgba(0,180,216,.5)';
+        if (statusEl2) statusEl2.textContent = 'Escuchando...';
+      } else if (state === 'speaking') {
+        orbEl.style.background = 'radial-gradient(circle at 35% 35%,#a855f7,#9333ea)';
+        orbEl.style.boxShadow = '0 0 40px rgba(168,85,247,.5)';
+        if (statusEl2) statusEl2.textContent = 'Hablando...';
+      } else if (state === 'thinking') {
+        orbEl.style.background = 'radial-gradient(circle at 35% 35%,#ffa502,#d97706)';
+        orbEl.style.boxShadow = '0 0 40px rgba(255,165,2,.4)';
+        if (statusEl2) statusEl2.textContent = 'Procesando...';
+      } else {
+        orbEl.style.background = 'radial-gradient(circle at 35% 35%,#a855f7,#6c5ce7)';
+        orbEl.style.boxShadow = '0 0 30px rgba(108,92,231,.3)';
+        if (statusEl2) statusEl2.textContent = 'JARVIS';
+      }
+    }
+
+    if (textEl) {
+      const lastEntry = S.log[S.log.length - 1];
+      if (lastEntry) {
+        textEl.textContent = lastEntry.text.slice(0, 100);
+      }
+    }
+  }
+}
+
+function focusApp() {
+  window.focus();
+  pip.classList.remove('show');
+}
+
+// ─── VISIBILITY CHANGE / BACKGROUND ────────
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    // Try to enter PiP when going to background
+    enterPiP();
+
+    // Keep service worker alive
+    if (navigator.serviceWorker?.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'KEEP_ALIVE' });
+    }
+  } else {
+    // Close PiP window if main window is visible
+    if (S.pipWindow && !S.pipWindow.closed) {
+      S.pipWindow.close();
+      S.pipWindow = null;
+    }
+    pip.classList.remove('show');
+
+    // Re-request wake lock
+    requestWakeLock();
+  }
+});
+
+// ─── WAKE LOCK ─────────────────────────────
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      S.wakeLock = await navigator.wakeLock.request('screen');
+      S.wakeLock.addEventListener('release', () => {
+        S.wakeLock = null;
+      });
+    }
+  } catch {}
+}
+
+// Re-acquire wake lock on visibility change
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && !S.wakeLock) {
+    try { await navigator.wakeLock.request('screen'); } catch {}
+  }
+});
+
+// ─── SERVICE WORKER ────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+// ═══════════════════════════════════════════════════════════
+//  UTILITIES
+// ═══════════════════════════════════════════════════════════
 function fmt(t) {
-  let h = t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  h = h.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,_2,code)=>`<pre><code>${code.trim()}</code></pre>`);
-  h = h.replace(/`([^`]+)`/g,'<code>$1</code>');
+  let h = escHtml(t);
+  h = h.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,_2,code)=>`<pre style="text-align:left;background:var(--bg3);padding:8px;border-radius:8px;overflow-x:auto;font-size:12px;margin:4px 0"><code>${code.trim()}</code></pre>`);
+  h = h.replace(/`([^`]+)`/g,'<code style="background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:12px">$1</code>');
   h = h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
   h = h.replace(/\n/g,'<br>');
   return h;
+}
+
+function escHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function clearResponse() {
@@ -717,38 +1058,6 @@ function clearResponse() {
   statusEl.className = 'status';
 }
 
-// ─── PiP / BACKGROUND PERSISTENCE ───────────
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    pip.classList.add('show');
-    if (navigator.serviceWorker?.controller) {
-      navigator.serviceWorker.controller.postMessage({ type: 'KEEP_ALIVE' });
-    }
-  } else {
-    pip.classList.remove('show');
-  }
-});
-
-// Wake lock
-async function requestWakeLock() {
-  try {
-    if ('wakeLock' in navigator) {
-      const lock = await navigator.wakeLock.request('screen');
-      document.addEventListener('visibilitychange', async () => {
-        if (document.visibilityState === 'visible') {
-          try { await navigator.wakeLock.request('screen'); } catch {}
-        }
-      });
-    }
-  } catch {}
-}
-
-// Service Worker
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
-
-// ─── UTILITIES ──────────────────────────────
 function togglePanel() {
   const o = document.getElementById('ov'), p = document.getElementById('pnl');
   const open = o.classList.contains('open');
@@ -778,8 +1087,28 @@ async function saveKey(key) {
   } catch { S.key = key; localStorage.setItem('j_key', key); }
 }
 
+// ─── KEYBOARD SHORTCUTS ─────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ' && !e.target.matches('input,textarea,select')) {
+    e.preventDefault();
+    toggleMic();
+  }
+  if (e.key === 'Escape') {
+    stopSpeaking();
+    const logPanel = document.getElementById('logPanel');
+    if (logPanel.classList.contains('open')) logPanel.classList.remove('open');
+  }
+});
+
 // ─── BOOT ───────────────────────────────────
 requestWakeLock();
+
+// Greet on first load
+if (S.key) {
+  setTimeout(() => {
+    speak('JARVIS en l\u00ednea. \u00bfEn qu\u00e9 puedo ayudarte?');
+  }, 1500);
+}
 </script>
 </body>
 </html>
