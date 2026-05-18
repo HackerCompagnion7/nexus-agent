@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  JARVIS — Termux Installation Script v3.0
+#  JARVIS — Termux Installation Script v4.0
 #  Zero-dependency setup for Android/Termux
-#  Includes: Node.js, Whisper.cpp STT, Piper TTS, Spanish male voice
+#  Includes: Node.js, Whisper.cpp STT, Piper TTS, Spanish male voice, Android control
 # ═══════════════════════════════════════════════════════════════
 
 set -e
@@ -25,8 +25,8 @@ echo -e "${CYAN}║   ██║╚██╗██║██╔══╝   ██�
 echo -e "${CYAN}║   ██║ ╚████║███████╗██╔╝ ██╗   ██║       ║${NC}"
 echo -e "${CYAN}║   ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝   ╚═╝       ║${NC}"
 echo -e "${CYAN}║                                           ║${NC}"
-echo -e "${CYAN}║   Autonomous Voice Agent v3.0             ║${NC}"
-echo -e "${CYAN}║   Whisper STT · Piper TTS · Termux        ║${NC}"
+echo -e "${CYAN}║   Autonomous Voice Agent v4.0             ║${NC}"
+echo -e "${CYAN}║   Whisper STT · Piper TTS · Android Ctrl  ║${NC}"
 echo -e "${CYAN}║                                           ║${NC}"
 echo -e "${CYAN}╚═══════════════════════════════════════════╝${NC}"
 echo ""
@@ -330,15 +330,36 @@ fi
 
 # ─── Install Termux TTS (fallback) ─────────────────────────
 if [ "$IS_TERMUX" = true ]; then
-    echo -e "${BOLD}[9/10]${NC} Installing Termux TTS (fallback)..."
+    echo -e "${BOLD}[9/10]${NC} Installing Termux:API (Android device control)..."
     pkg install termux-api -y 2>/dev/null || true
     if command -v termux-tts-speak &>/dev/null; then
         echo -e "${GREEN}✓${NC} termux-tts-speak available"
     else
         echo -e "${YELLOW}⚠${NC} termux-tts-speak not found. Install: ${CYAN}pkg install termux-api${NC}"
     fi
+
+    # Install Termux:API for Android device control
+    echo -e "${DIM}  Installing Termux:API for device control...${NC}"
+    pkg install termux-api -y 2>/dev/null || true
+
+    # Verify key Termux:API commands
+    TERMUX_API_OK=false
+    for cmd in termux-battery-status termux-notification termux-flash termux-wifi-connectioninfo; do
+        if command -v "$cmd" &>/dev/null; then
+            TERMUX_API_OK=true
+            break
+        fi
+    done
+
+    if [ "$TERMUX_API_OK" = true ]; then
+        echo -e "${GREEN}✓${NC} Termux:API commands available (battery, flash, notify, wifi, etc.)"
+    else
+        echo -e "${YELLOW}⚠${NC} Termux:API not fully installed. Android device control may not work."
+        echo -e "  Install: ${CYAN}pkg install termux-api${NC}"
+        echo -e "  Also install Termux:API app from F-Droid: ${CYAN}https://f-droid.org/packages/com.termux.api/${NC}"
+    fi
 else
-    echo -e "${BOLD}[9/10]${NC} Skipping Termux TTS (not Termux)"
+    echo -e "${BOLD}[9/11]${NC} Skipping Termux tools (not Termux)"
 fi
 
 # ─── Step 10: Configure API Key ─────────────────────────────
@@ -452,12 +473,15 @@ fi
 echo ""
 if [ $ERRORS -eq 0 ]; then
     echo -e "${GREEN}════════════════════════════════════════${NC}"
-    echo -e "${GREEN}  JARVIS v3.0 Setup Complete!${NC}"
+    echo -e "${GREEN}  JARVIS v4.0 Setup Complete!${NC}"
     echo -e "${GREEN}════════════════════════════════════════${NC}"
     echo ""
     echo -e "  ${CYAN}STT: Whisper.cpp (ggml-tiny, multilingual)${NC}"
     echo -e "  ${CYAN}TTS: Piper (es_ES-carlfm-high, Spanish male)${NC}"
     echo -e "  ${CYAN}LLM: Mistral Small (api.mistral.ai)${NC}"
+    if [ "$IS_TERMUX" = true ]; then
+    echo -e "  ${CYAN}Android: Device control (apps, battery, flash, wifi, sms, calls, etc.)${NC}"
+    fi
     echo ""
     echo -e "  ${BOLD}CLI mode (text commands):${NC}"
     echo -e "  ${BOLD}cd $SCRIPT_DIR && node index.js${NC}"

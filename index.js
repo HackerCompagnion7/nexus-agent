@@ -32,7 +32,7 @@ const http = require('http');
 })();
 
 const { LLMClient, TokenEstimator, CONFIG } = require('./llm');
-const { ToolRegistry, ToolExecutor, BUILT_IN_TOOLS } = require('./tools');
+const { ToolRegistry, ToolExecutor, BUILT_IN_TOOLS, IS_ANDROID } = require('./tools');
 const { MemorySystem } = require('./memory');
 const { Coordinator, TASK_STATE } = require('./coordinator');
 const { PiperTTS, VOICES, DEFAULT_VOICE_MAP } = require('./tts');
@@ -374,6 +374,7 @@ class NexusAgent {
       .replace('{{MEMORY_CONTEXT}}', memoryContext || 'No relevant memories found.')
       .replace('{{WORKING_DIR}}', this.workingDir)
       .replace('{{PLATFORM}}', `${os.type()} ${os.arch()}`)
+      .replace('{{IS_ANDROID}}', IS_ANDROID ? 'Si' : 'No')
       .replace('{{SESSION_START}}', this.sessionStart);
 
     messages.push({ role: 'system', content: systemContent });
@@ -382,7 +383,10 @@ class NexusAgent {
     const historySlice = this.conversationHistory.slice(-maxHistoryMessages);
 
     for (const msg of historySlice) {
-      messages.push({ role: msg.role, content: msg.content });
+      // Fix API 400: Never send empty content — Mistral rejects empty assistant messages
+      const content = msg.content || '';
+      if (msg.role === 'assistant' && !content.trim()) continue;
+      messages.push({ role: msg.role, content });
     }
 
     return messages;
@@ -633,14 +637,65 @@ class NexusAgent {
         `${C.bcyan}/find${C.reset} [pat]  Search for pattern in files`,
         `${C.bcyan}/space${C.reset}       Show disk usage`,
         `${C.bcyan}/organize${C.reset} [d] Organize directory by file type`,
+        IS_ANDROID ? '' : '',
+        IS_ANDROID ? `${C.bgreen}Android:${C.reset}` : '',
+        IS_ANDROID ? `${C.bgreen}/apps${C.reset} [name] Search installed apps` : '',
+        IS_ANDROID ? `${C.bgreen}/battery${C.reset}     Show battery status` : '',
+        IS_ANDROID ? `${C.bgreen}/flash${C.reset} [on|off] Toggle flashlight` : '',
+        IS_ANDROID ? `${C.bgreen}/wifi${C.reset}        Show WiFi info` : '',
         '',
         `${C.dim}Or type your task in natural language.${C.reset}`,
-      ].join('\n');
+      ].filter(Boolean).join('\n');
     }
 
     if (cmd === '/exit' || cmd === '/quit') {
       this.shutdown();
       return 'exit';
+    }
+
+    // ─── Android direct commands (Termux only) ────────────
+    if (IS_ANDROID && command === '/apps') {
+      const search = parts.slice(1).join(' ');
+      try {
+        const cmd = search
+          ? `pm list packages | grep -i "${search}" | head -20`
+          : `pm list packages | head -20`;
+        const output = require('child_process').execSync(cmd, { encoding: 'utf-8', timeout: 8000 });
+        if (!output.trim()) return `${C.dim}No apps found${C.reset}`;
+        return output.trim().split('\n').map(l => {
+          const pkg = l.replace('package:', '').trim();
+          return `  ${C.cyan}${pkg.split('.').pop()}${C.reset} ${C.dim}${pkg}${C.reset}`;
+        }).join('\n');
+      } catch { return `${C.bred}Error listing apps${C.reset}`; }
+    }
+
+    if (IS_ANDROID && command === '/battery') {
+      try {
+        const output = require('child_process').execSync('termux-battery-status', { encoding: 'utf-8', timeout: 5000 });
+        try {
+          const data = JSON.parse(output);
+          return `${C.bgreen}Battery: ${data.percentage}%${C.reset} — ${data.status} (${data.health || 'N/A'})`;
+        } catch { return output; }
+      } catch { return `${C.bred}Battery info unavailable. Install: pkg install termux-api${C.reset}`; }
+    }
+
+    if (IS_ANDROID && command === '/flash') {
+      const state = parts[1];
+      if (state !== 'on' && state !== 'off') return `${C.byellow}Usage: /flash on|off${C.reset}`;
+      try {
+        require('child_process').execSync(`termux-flash ${state}`, { timeout: 5000 });
+        return `${C.bgreen}Flashlight ${state}${C.reset}`;
+      } catch { return `${C.bred}Flash unavailable. Install: pkg install termux-api${C.reset}`; }
+    }
+
+    if (IS_ANDROID && command === '/wifi') {
+      try {
+        const output = require('child_process').execSync('termux-wifi-connectioninfo', { encoding: 'utf-8', timeout: 5000 });
+        try {
+          const data = JSON.parse(output);
+          return `${C.bgreen}WiFi: ${data.ssid || 'N/A'}${C.reset} — IP: ${data.ip || 'N/A'} — Freq: ${data.frequency_mhz || 'N/A'}MHz`;
+        } catch { return output; }
+      } catch { return `${C.bred}WiFi info unavailable. Install: pkg install termux-api${C.reset}`; }
     }
 
     return null;
@@ -749,9 +804,9 @@ ${C.bmagenta}${C.bold}  ╦ ╦╔═╗╔╗ ╔═╗╦ ╦╔═╗╦  ╦
 ${C.bmagenta}${C.bold}  ║║║║╣ ╠╩╗╚═╗╠═╣║╣ ║  ║  ${C.reset}
 ${C.bmagenta}${C.bold}  ╚╩╝╚═╝╚═╝╚═╝╩ ╩╚═╝╩═╝╩═╝${C.reset}
 
-${C.dim}  Autonomous Voice Agent v2.0${C.reset}
+${C.dim}  Autonomous Voice Agent v3.0${C.reset}
 ${C.cyan}  Mistral Small \u00B7 api.mistral.ai \u00B7 ${env}${C.reset}
-
+${IS_ANDROID ? C.bgreen + '  Android/Termux \u00B7 Device control active' + C.reset + '\n' : ''}\
 ${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
 `);
 

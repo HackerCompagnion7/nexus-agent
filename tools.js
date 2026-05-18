@@ -183,8 +183,34 @@ class ToolExecutor {
   }
 }
 
+// ─── Android/Termux Detection ──────────────────────────────────
+const IS_ANDROID = !!process.env.TERMUX_VERSION || fs.existsSync('/data/data/com.termux');
+
+/**
+ * Safe shell execution helper for Android commands.
+ * Returns trimmed stdout or throws with meaningful error.
+ */
+function androidExec(command, timeout = 10000) {
+  try {
+    const output = execSync(command, {
+      timeout,
+      maxBuffer: 1024 * 1024,
+      encoding: 'utf-8',
+      shell: '/bin/sh',
+      env: { ...process.env, TERM: 'dumb' }
+    });
+    return output.trim();
+  } catch (error) {
+    const parts = [];
+    if (error.stdout) parts.push(error.stdout.trim());
+    if (error.stderr) parts.push(error.stderr.trim());
+    if (parts.length === 0) parts.push(`Exit code ${error.status}`);
+    throw new Error(parts.join(' — '));
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
-//  BUILT-IN TOOLS — 12 tools for full autonomous capability
+//  BUILT-IN TOOLS — Core + Android tools for full autonomous capability
 // ═══════════════════════════════════════════════════════════════
 
 const BUILT_IN_TOOLS = {
@@ -700,6 +726,374 @@ const BUILT_IN_TOOLS = {
       // Placeholder that gets replaced during initialization
       return JSON.stringify({ note: 'Memory system not yet connected', query: params.query });
     }
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  //  ANDROID/TERMUX TOOLS — Device control from voice commands
+  //  These tools use Termux:API + Android Activity Manager
+  //  Only active when running in Termux/Android environment
+  // ═══════════════════════════════════════════════════════════════
+
+  // ─── 13. ANDROID APP OPEN ────────────────────────────────
+  android_app_open: {
+    name: 'android_app_open',
+    description: 'Open an Android application by name. Searches installed packages by keyword and launches the best match. Examples: "whatsapp", "chrome", "camera", "youtube".',
+    parameters: {
+      type: 'object',
+      properties: {
+        app: { type: 'string', description: 'App name to search for (e.g. "whatsapp", "chrome", "camera")' }
+      },
+      required: ['app']
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      const appName = params.app.toLowerCase().replace(/\s+/g, '');
+      // Search for matching package
+      const searchOutput = androidExec(`pm list packages | grep -i "${appName}"`, 8000);
+      if (!searchOutput) throw new Error(`No app found matching "${params.app}". Try a more specific name.`);
+
+      // Take the first match
+      const lines = searchOutput.split('\n').filter(l => l.trim());
+      const firstPackage = lines[0].split(':')[1]?.trim();
+      if (!firstPackage) throw new Error(`Could not parse package name for "${params.app}"`);
+
+      // Launch the app via Activity Manager
+      androidExec(`am start -n ${firstPackage}/.MainActivity 2>/dev/null || am start ${firstPackage}`, 8000);
+      return `App opened: ${firstPackage} (${lines.length} match${lines.length > 1 ? 'es' : ''} found)`;
+    }
+  },
+
+  // ─── 14. ANDROID APP LIST ────────────────────────────────
+  android_app_list: {
+    name: 'android_app_list',
+    description: 'Search or list installed Android applications. Returns package names matching a search term, or lists all apps.',
+    parameters: {
+      type: 'object',
+      properties: {
+        search: { type: 'string', description: 'Search term to filter apps (optional — leave empty to list all)' },
+        limit: { type: 'integer', default: 20, minimum: 1, maximum: 100, description: 'Max results' }
+      }
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      const cmd = params.search
+        ? `pm list packages | grep -i "${params.search}" | head -${params.limit || 20}`
+        : `pm list packages | head -${params.limit || 20}`;
+
+      const output = androidExec(cmd, 8000);
+      if (!output) return params.search ? `No apps found matching "${params.search}"` : 'No apps found';
+
+      const apps = output.split('\n')
+        .filter(l => l.startsWith('package:'))
+        .map(l => l.replace('package:', '').trim())
+        .filter(Boolean);
+
+      return JSON.stringify(apps.map(pkg => ({ package: pkg, name: pkg.split('.').pop() })), null, 2);
+    }
+  },
+
+  // ─── 15. ANDROID WEB OPEN ────────────────────────────────
+  android_web_open: {
+    name: 'android_web_open',
+    description: 'Open a URL in the Android browser. Use for web searches, opening websites, or viewing online content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL to open (e.g. "https://google.com/search?q=query")' },
+        search: { type: 'string', description: 'Search query — auto-constructs Google URL if no url provided' }
+      }
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      const targetUrl = params.url || (params.search
+        ? `https://www.google.com/search?q=${encodeURIComponent(params.search)}`
+        : null);
+
+      if (!targetUrl) throw new Error('Provide either "url" or "search" parameter');
+
+      // termux-open-url for URLs, fallback to am start
+      try {
+        androidExec(`termux-open-url "${targetUrl}"`, 5000);
+      } catch {
+        androidExec(`am start -a android.intent.action.VIEW -d "${targetUrl}"`, 5000);
+      }
+
+      return `Opened: ${targetUrl}`;
+    }
+  },
+
+  // ─── 16. ANDROID NOTIFY ─────────────────────────────────
+  android_notify: {
+    name: 'android_notify',
+    description: 'Show an Android notification with title and content. Useful for alerts, reminders, and status updates.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Notification title' },
+        content: { type: 'string', description: 'Notification body text' },
+        id: { type: 'integer', description: 'Notification ID (for updating/canceling)', default: 1 }
+      },
+      required: ['title', 'content']
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      androidExec(`termux-notification --title "${params.title.replace(/"/g, '\\"')}" --content "${params.content.replace(/"/g, '\\"')}" --id ${params.id || 1}`, 5000);
+      return `Notification sent: "${params.title}"`;
+    }
+  },
+
+  // ─── 17. ANDROID SMS ─────────────────────────────────────
+  android_sms: {
+    name: 'android_sms',
+    description: 'Send an SMS message to a phone number. Use responsibly — only send when explicitly asked by the user.',
+    parameters: {
+      type: 'object',
+      properties: {
+        number: { type: 'string', description: 'Phone number to send SMS to' },
+        message: { type: 'string', description: 'SMS message content' }
+      },
+      required: ['number', 'message']
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      androidExec(`termux-sms-send -n "${params.number}" "${params.message.replace(/"/g, '\\"')}"`, 10000);
+      return `SMS sent to ${params.number}: "${params.message.slice(0, 50)}${params.message.length > 50 ? '...' : ''}"`;
+    }
+  },
+
+  // ─── 18. ANDROID CALL ───────────────────────────────────
+  android_call: {
+    name: 'android_call',
+    description: 'Initiate a phone call to a number. Only use when the user explicitly asks to call someone.',
+    parameters: {
+      type: 'object',
+      properties: {
+        number: { type: 'string', description: 'Phone number to call' }
+      },
+      required: ['number']
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      androidExec(`am start -a android.intent.action.CALL -d tel:${params.number}`, 5000);
+      return `Calling ${params.number}...`;
+    }
+  },
+
+  // ─── 19. ANDROID BATTERY ────────────────────────────────
+  android_battery: {
+    name: 'android_battery',
+    description: 'Get Android battery status: level, charging state, health, and temperature.',
+    parameters: {
+      type: 'object',
+      properties: {}
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      try {
+        const output = androidExec('termux-battery-status', 5000);
+        try { return JSON.stringify(JSON.parse(output), null, 2); } catch { return output; }
+      } catch {
+        // Fallback: read from /sys
+        try {
+          const level = fs.readFileSync('/sys/class/power_supply/battery/capacity', 'utf-8').trim();
+          const status = fs.readFileSync('/sys/class/power_supply/battery/status', 'utf-8').trim();
+          return JSON.stringify({ level: `${level}%`, status });
+        } catch {
+          return 'Unable to read battery status';
+        }
+      }
+    }
+  },
+
+  // ─── 20. ANDROID CLIPBOARD ──────────────────────────────
+  android_clipboard: {
+    name: 'android_clipboard',
+    description: 'Get or set the Android clipboard content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['get', 'set'], default: 'get', description: 'Get or set clipboard' },
+        text: { type: 'string', description: 'Text to set (required for "set" action)' }
+      }
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      if (params.action === 'set') {
+        if (!params.text) throw new Error('Text required for "set" action');
+        androidExec(`termux-clipboard-set "${params.text.replace(/"/g, '\\"')}"`, 5000);
+        return `Clipboard set: "${params.text.slice(0, 50)}"`;
+      }
+
+      return androidExec('termux-clipboard-get', 5000) || '(clipboard empty)';
+    }
+  },
+
+  // ─── 21. ANDROID MEDIA PLAYER ───────────────────────────
+  android_media_play: {
+    name: 'android_media_play',
+    description: 'Control Android media playback: play a file, pause, resume, or stop.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['play', 'pause', 'resume', 'stop'], default: 'play', description: 'Media action' },
+        file: { type: 'string', description: 'Audio file path to play (required for "play" action)' }
+      }
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      switch (params.action) {
+        case 'play':
+          if (!params.file) throw new Error('File path required for "play" action');
+          androidExec(`termux-media-player play "${params.file}"`, 5000);
+          return `Playing: ${params.file}`;
+        case 'pause':
+          androidExec('termux-media-player pause', 5000);
+          return 'Media paused';
+        case 'resume':
+          androidExec('termux-media-player play', 5000);
+          return 'Media resumed';
+        case 'stop':
+          androidExec('termux-media-player stop', 5000);
+          return 'Media stopped';
+        default:
+          throw new Error(`Unknown media action: ${params.action}`);
+      }
+    }
+  },
+
+  // ─── 22. ANDROID FLASH/TOGGLE ───────────────────────────
+  android_flash: {
+    name: 'android_flash',
+    description: 'Toggle the Android flashlight (torch) on or off.',
+    parameters: {
+      type: 'object',
+      properties: {
+        state: { type: 'string', enum: ['on', 'off'], description: 'Flash state: "on" or "off"' }
+      },
+      required: ['state']
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      try {
+        androidExec(`termux-flash ${params.state}`, 5000);
+      } catch {
+        // Fallback: toggle via sysfs
+        const val = params.state === 'on' ? '1' : '0';
+        try {
+          androidExec(`echo ${val} > /sys/class/leds/flashlight/brightness 2>/dev/null || echo ${val} > /sys/class/leds/torch-sec1/brightness`, 3000);
+        } catch {
+          throw new Error('Could not toggle flashlight. Install: pkg install termux-api');
+        }
+      }
+      return `Flashlight ${params.state}`;
+    }
+  },
+
+  // ─── 23. ANDROID VOLUME ─────────────────────────────────
+  android_volume: {
+    name: 'android_volume',
+    description: 'Set or get Android volume level for a specific audio stream.',
+    parameters: {
+      type: 'object',
+      properties: {
+        stream: { type: 'string', enum: ['music', 'ring', 'notification', 'alarm', 'system'], default: 'music', description: 'Audio stream' },
+        level: { type: 'integer', description: 'Volume level (0-15). If omitted, returns current level.', minimum: 0, maximum: 15 }
+      }
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      const stream = params.stream || 'music';
+      if (params.level !== undefined) {
+        androidExec(`termux-volume ${stream} ${params.level}`, 5000);
+        return `Volume set: ${stream} → ${params.level}`;
+      }
+      // Getting current volume isn't directly supported, try settings
+      try {
+        const output = androidExec(`settings get system volume_${stream}`, 5000);
+        return `Current ${stream} volume: ${output}`;
+      } catch {
+        return `Volume control for "${stream}" — use level parameter to set (0-15)`;
+      }
+    }
+  },
+
+  // ─── 24. ANDROID WIFI ───────────────────────────────────
+  android_wifi: {
+    name: 'android_wifi',
+    description: 'Get WiFi connection information: SSID, IP address, gateway, etc.',
+    parameters: {
+      type: 'object',
+      properties: {}
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      try {
+        const output = androidExec('termux-wifi-connectioninfo', 5000);
+        try { return JSON.stringify(JSON.parse(output), null, 2); } catch { return output; }
+      } catch {
+        return 'WiFi info unavailable. Install: pkg install termux-api';
+      }
+    }
+  },
+
+  // ─── 25. ANDROID LOCATION ───────────────────────────────
+  android_location: {
+    name: 'android_location',
+    description: 'Get the current GPS location: latitude, longitude, altitude, and accuracy.',
+    parameters: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', enum: ['gps', 'network', 'passive'], default: 'gps', description: 'Location provider' }
+      }
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      try {
+        const output = androidExec(`termux-location -p ${params.provider || 'gps'}`, 15000);
+        try { return JSON.stringify(JSON.parse(output), null, 2); } catch { return output; }
+      } catch {
+        return 'Location unavailable. Enable GPS and try again.';
+      }
+    }
+  },
+
+  // ─── 26. ANDROID SHARE ──────────────────────────────────
+  android_share: {
+    name: 'android_share',
+    description: 'Share text or a file using Android share sheet (send to WhatsApp, Telegram, etc.).',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text content to share' },
+        file: { type: 'string', description: 'File path to share (alternative to text)' }
+      }
+    },
+    handler: async (params, ctx) => {
+      if (!IS_ANDROID) throw new Error('Android tools only available in Termux/Android environment');
+
+      if (params.file) {
+        androidExec(`termux-share -a send "${params.file}"`, 8000);
+        return `Shared file: ${params.file}`;
+      }
+      if (params.text) {
+        androidExec(`termux-share -a send -t text "${params.text.replace(/"/g, '\\"')}"`, 8000);
+        return `Shared text: "${params.text.slice(0, 50)}"`;
+      }
+      throw new Error('Provide either "text" or "file" to share');
+    }
   }
 };
 
@@ -769,4 +1163,4 @@ class ToolRegistry {
 }
 
 // ─── Exports ──────────────────────────────────────────────────
-module.exports = { ToolRegistry, ToolExecutor, SchemaValidator, BUILT_IN_TOOLS };
+module.exports = { ToolRegistry, ToolExecutor, SchemaValidator, BUILT_IN_TOOLS, IS_ANDROID };
