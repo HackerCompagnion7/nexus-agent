@@ -1,0 +1,17 @@
+{
+  "name": "nexus-agent",
+  "version": "1.0.0",
+  "description": "NEXUS — Autonomous AI Agent powered by Mistral Small via NVIDIA API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "web": "node index.js --web",
+    "web:port": "node index.js --web 8080"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["agent", "autonomous", "mistral", "nvidia", "ai"],
+  "license": "MIT",
+  "dependencies": {}
+}
