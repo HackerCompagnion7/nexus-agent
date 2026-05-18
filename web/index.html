@@ -579,15 +579,192 @@ async function submitKey() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  SPEECH RECOGNITION — Voice Input (100% voice, no typing)
+//  VOICE INPUT — Server-side Whisper STT + Browser fallback
+//  Audio captured via MediaRecorder → sent to /api/stt
+//  Falls back to browser SpeechRecognition if server unavailable
 // ═══════════════════════════════════════════════════════════
-function initRecognition() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    statusEl.textContent = 'Voz no soportada en este navegador';
-    statusEl.classList.add('thinking-text');
-    return null;
+
+let mediaStream = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let serverSTTAvailable = null; // null = not checked yet
+
+// Check if server STT is available
+async function checkServerSTT() {
+  if (serverSTTAvailable !== null) return serverSTTAvailable;
+  try {
+    const res = await fetch(`${S.url}/api/stt/models`);
+    const data = await res.json();
+    serverSTTAvailable = data.available === true;
+    return serverSTTAvailable;
+  } catch {
+    serverSTTAvailable = false;
+    return false;
   }
+}
+
+// ─── SERVER STT — Record audio → send to /api/stt ───────
+async function startServerListening() {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true
+      }
+    });
+  } catch (e) {
+    statusEl.textContent = 'Acceso al micr\u00f3fono denegado';
+    statusEl.className = 'status thinking-text';
+    return;
+  }
+
+  audioChunks = [];
+
+  // Use webm/opus if available, otherwise wav
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : MediaRecorder.isTypeSupported('audio/webm')
+    ? 'audio/webm'
+    : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+    ? 'audio/ogg;codecs=opus'
+    : '';
+
+  const options = mimeType ? { mimeType } : {};
+
+  mediaRecorder = new MediaRecorder(mediaStream, options);
+  const usedMimeType = mediaRecorder.mimeType || 'audio/webm';
+
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) {
+      audioChunks.push(e.data);
+    }
+  };
+
+  mediaRecorder.onstop = async () => {
+    // Stop mic
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+
+    S.listening = false;
+    orb.classList.remove('listening');
+    dot.className = 'dot';
+    pip.classList.remove('listening');
+    micBtn.classList.remove('mic-on');
+
+    // Process audio
+    if (audioChunks.length === 0) {
+      if (S.autoListen && !S.loading && !S.speaking) {
+        setTimeout(() => startListening(), 800);
+      } else {
+        statusEl.textContent = 'Toca el orbe para hablar';
+        statusEl.className = 'status';
+      }
+      return;
+    }
+
+    const audioBlob = new Blob(audioChunks, { type: usedMimeType });
+
+    // Check minimum size (less than 1KB = probably no speech)
+    if (audioBlob.size < 1000) {
+      statusEl.textContent = 'Audio muy corto. Toca para intentar';
+      statusEl.className = 'status';
+      if (S.autoListen && !S.loading && !S.speaking) {
+        setTimeout(() => startListening(), 800);
+      }
+      return;
+    }
+
+    // Show transcribing state
+    statusEl.textContent = 'Transcribiendo...';
+    statusEl.className = 'status thinking-text';
+    orb.classList.add('thinking');
+    dot.className = 'dot think';
+
+    try {
+      const lang = S.lang.slice(0, 2);
+      const res = await fetch(`${S.url}/api/stt?lang=${lang}`, {
+        method: 'POST',
+        body: audioBlob
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.text?.trim();
+
+        if (text) {
+          serverSTTAvailable = true;
+          transcript.textContent = text;
+          transcript.className = 'transcript';
+          orb.classList.remove('thinking');
+          dot.className = 'dot';
+          sendVoice(text);
+          return;
+        }
+      }
+
+      // Server STT failed or returned empty — try fallback
+      const errData = res.ok ? {} : await res.json().catch(() => ({}));
+      console.log('Server STT response:', res.status, errData);
+
+      if (errData.fallback || !res.ok) {
+        serverSTTAvailable = false;
+        orb.classList.remove('thinking');
+        dot.className = 'dot';
+        startBrowserListening(); // Fallback to browser
+        return;
+      }
+
+      // No text transcribed
+      orb.classList.remove('thinking');
+      dot.className = 'dot';
+      statusEl.textContent = 'No se detect\u00f3 voz. Toca para intentar';
+      statusEl.className = 'status';
+      if (S.autoListen && !S.loading && !S.speaking) {
+        setTimeout(() => startListening(), 800);
+      }
+
+    } catch (e) {
+      console.log('Server STT error:', e.message);
+      serverSTTAvailable = false;
+      orb.classList.remove('thinking');
+      dot.className = 'dot';
+      // Network error — fallback to browser
+      startBrowserListening();
+    }
+  };
+
+  // Visual feedback
+  S.listening = true;
+  orb.classList.add('listening');
+  orb.classList.remove('speaking', 'thinking');
+  dot.className = 'dot listen';
+  statusEl.textContent = 'Escuchando...';
+  statusEl.className = 'status active';
+  transcript.textContent = '';
+  responseEl.textContent = '';
+  pip.classList.add('listening');
+  micBtn.classList.add('mic-on');
+  stopSpeaking();
+
+  // Start recording — collect data every second for better responsiveness
+  mediaRecorder.start(1000);
+}
+
+// Stop server recording
+function stopServerListening() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+}
+
+// ─── BROWSER FALLBACK — Web Speech API ──────────────────
+function initBrowserRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
 
   const rec = new SR();
   rec.continuous = false;
@@ -602,7 +779,7 @@ function initRecognition() {
     orb.classList.add('listening');
     orb.classList.remove('speaking', 'thinking');
     dot.className = 'dot listen';
-    statusEl.textContent = 'Escuchando...';
+    statusEl.textContent = 'Escuchando... (navegador)';
     statusEl.className = 'status active';
     transcript.textContent = '';
     responseEl.textContent = '';
@@ -614,16 +791,11 @@ function initRecognition() {
   rec.onresult = (e) => {
     let interim = '';
     finalText = '';
-
     for (let i = 0; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) {
-        finalText += t;
-      } else {
-        interim += t;
-      }
+      if (e.results[i].isFinal) finalText += t;
+      else interim += t;
     }
-
     if (finalText) {
       transcript.textContent = finalText;
       transcript.className = 'transcript';
@@ -640,9 +812,6 @@ function initRecognition() {
     } else if (e.error === 'no-speech') {
       statusEl.textContent = 'No se detect\u00f3 voz. Toca para intentar';
       statusEl.className = 'status';
-    } else if (e.error === 'network') {
-      statusEl.textContent = 'Error de red. Verifica conexi\u00f3n';
-      statusEl.className = 'status thinking-text';
     } else if (e.error !== 'aborted') {
       console.log('Speech error:', e.error);
     }
@@ -655,16 +824,10 @@ function initRecognition() {
     pip.classList.remove('listening');
     micBtn.classList.remove('mic-on');
 
-    // If we got text, send it
     if (finalText.trim()) {
       sendVoice(finalText.trim());
     } else if (S.autoListen && !S.loading && !S.speaking) {
-      // Auto-listen: restart after short pause
-      setTimeout(() => {
-        if (S.autoListen && !S.loading && !S.speaking) {
-          startListening();
-        }
-      }, 800);
+      setTimeout(() => { if (S.autoListen && !S.loading && !S.speaking) startListening(); }, 800);
     } else {
       statusEl.textContent = 'Toca el orbe para hablar';
       statusEl.className = 'status';
@@ -674,35 +837,50 @@ function initRecognition() {
   return rec;
 }
 
-function resetRecognition() {
-  if (S.recognition) {
-    S.listening = false;
-    try { S.recognition.stop(); } catch {}
-    S.recognition = null;
+function startBrowserListening() {
+  const rec = initBrowserRecognition();
+  if (!rec) {
+    statusEl.textContent = 'Voz no soportada en este navegador';
+    statusEl.className = 'status thinking-text';
+    return;
+  }
+  S.recognition = rec;
+  stopSpeaking();
+  try { rec.start(); } catch (e) {
+    rec.stop();
+    setTimeout(() => { try { rec.start(); } catch {} }, 200);
   }
 }
 
-function startListening() {
-  if (!S.recognition) {
-    S.recognition = initRecognition();
-  }
-  if (!S.recognition) return;
+// ─── MAIN LISTEN — Auto-selects server STT or browser fallback
+async function startListening() {
+  // Check server STT availability (cached)
+  const useServer = await checkServerSTT();
 
-  stopSpeaking();
-  try {
-    S.recognition.start();
-  } catch (e) {
-    S.recognition.stop();
-    setTimeout(() => { try { S.recognition.start(); } catch {} }, 200);
+  if (useServer) {
+    await startServerListening();
+  } else {
+    startBrowserListening();
   }
 }
 
 function toggleMic() {
   if (S.listening) {
     S.listening = false;
+    // Stop whichever mode is active
+    stopServerListening();
     if (S.recognition) try { S.recognition.stop(); } catch {}
   } else {
     startListening();
+  }
+}
+
+function resetRecognition() {
+  stopServerListening();
+  if (S.recognition) {
+    S.listening = false;
+    try { S.recognition.stop(); } catch {}
+    S.recognition = null;
   }
 }
 

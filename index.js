@@ -36,6 +36,7 @@ const { ToolRegistry, ToolExecutor, BUILT_IN_TOOLS } = require('./tools');
 const { MemorySystem } = require('./memory');
 const { Coordinator, TASK_STATE } = require('./coordinator');
 const { PiperTTS, VOICES, DEFAULT_VOICE_MAP } = require('./tts');
+const { WhisperSTT, MODELS: STT_MODELS, DEFAULT_MODEL: DEFAULT_STT_MODEL } = require('./stt');
 
 // ─── ANSI Colors (Termux compatible) ──────────────────────────
 const C = {
@@ -894,6 +895,17 @@ async function startWebServer(agent, port = 8080) {
     console.log('[JARVIS] TTS: Piper not found (falling back to browser SpeechSynthesis)');
   }
 
+  // ─── Initialize STT Engine ──────────────────────────────────
+  const stt = new WhisperSTT({ baseDir: __dirname });
+  if (stt.isAvailable()) {
+    console.log(`[JARVIS] STT: Whisper ready — ${stt.defaultModel}`);
+  } else {
+    console.log('[JARVIS] STT: Whisper not found (falling back to browser SpeechRecognition)');
+  }
+
+  // Clean up old temp files periodically
+  setInterval(() => { try { stt.cleanup(); } catch {} }, 30 * 60 * 1000);
+
   const server = http.createServer(async (req, res) => {
     // CORS headers
     const corsHeaders = {
@@ -987,6 +999,69 @@ async function startWebServer(agent, port = 8080) {
       return;
     }
 
+    // ─── STT API — Server-side Whisper transcription ──────────
+    if (req.url === '/api/stt' && req.method === 'POST') {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', async () => {
+        try {
+          const audioBuffer = Buffer.concat(chunks);
+          if (audioBuffer.length < 100) {
+            res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
+            res.end(JSON.stringify({ error: 'Audio too short' }));
+            return;
+          }
+
+          if (!stt.isAvailable()) {
+            res.writeHead(503, { 'Content-Type': 'application/json', ...corsHeaders });
+            res.end(JSON.stringify({ error: 'STT not available — whisper.cpp not installed', fallback: true }));
+            return;
+          }
+
+          // Detect format from content-type
+          const contentType = req.headers['content-type'] || '';
+          let format = 'webm';
+          if (contentType.includes('wav')) format = 'wav';
+          else if (contentType.includes('ogg')) format = 'ogg';
+          else if (contentType.includes('mp4')) format = 'mp4';
+          else if (contentType.includes('mp3')) format = 'mp3';
+
+          // Get language from query param
+          const url = new URL(req.url, `http://localhost:${port}`);
+          const lang = url.searchParams.get('lang') || 'es';
+
+          console.log(`[STT] Transcribing ${audioBuffer.length} bytes (${format}, lang=${lang})...`);
+          const startTime = Date.now();
+
+          const result = await stt.transcribe(audioBuffer, { lang, format });
+
+          const elapsed = Date.now() - startTime;
+          console.log(`[STT] Transcribed in ${elapsed}ms: "${result.text.slice(0, 80)}"`);
+
+          res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
+          res.end(JSON.stringify({
+            text: result.text,
+            lang: result.lang,
+            confidence: result.confidence,
+            processingTime: elapsed
+          }));
+        } catch (error) {
+          console.error('[STT] Error:', error.message);
+          res.writeHead(500, { 'Content-Type': 'application/json', ...corsHeaders });
+          res.end(JSON.stringify({ error: error.message, fallback: true }));
+        }
+      });
+      return;
+    }
+
+    // ─── STT Models List ──────────────────────────────────────
+    if (req.url === '/api/stt/models' && req.method === 'GET') {
+      const models = stt.isAvailable() ? stt.getAvailableModels() : [];
+      res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
+      res.end(JSON.stringify({ available: stt.isAvailable(), models }));
+      return;
+    }
+
     // ─── API Key ──────────────────────────────────────────────
     if (req.url === '/api/apikey' && req.method === 'POST') {
       let body = '';
@@ -1009,6 +1084,7 @@ async function startWebServer(agent, port = 8080) {
     if (req.url === '/api/status' && req.method === 'GET') {
       const stats = agent.getStats();
       stats.tts = tts.getStats();
+      stats.stt = stt.getStats();
       res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
       res.end(JSON.stringify(stats));
       return;

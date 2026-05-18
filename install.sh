@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  JARVIS — Termux Installation Script
+#  JARVIS — Termux Installation Script v3.0
 #  Zero-dependency setup for Android/Termux
-#  Includes: Node.js, Piper TTS, Spanish male voice
+#  Includes: Node.js, Whisper.cpp STT, Piper TTS, Spanish male voice
 # ═══════════════════════════════════════════════════════════════
 
 set -e
@@ -25,8 +25,8 @@ echo -e "${CYAN}║   ██║╚██╗██║██╔══╝   ██�
 echo -e "${CYAN}║   ██║ ╚████║███████╗██╔╝ ██╗   ██║       ║${NC}"
 echo -e "${CYAN}║   ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝   ╚═╝       ║${NC}"
 echo -e "${CYAN}║                                           ║${NC}"
-echo -e "${CYAN}║   Autonomous Voice Agent v2.0             ║${NC}"
-echo -e "${CYAN}║   Piper TTS · Male Voice · Termux         ║${NC}"
+echo -e "${CYAN}║   Autonomous Voice Agent v3.0             ║${NC}"
+echo -e "${CYAN}║   Whisper STT · Piper TTS · Termux        ║${NC}"
 echo -e "${CYAN}║                                           ║${NC}"
 echo -e "${CYAN}╚═══════════════════════════════════════════╝${NC}"
 echo ""
@@ -41,7 +41,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ─── Step 1: Update packages ────────────────────────────────
-echo -e "${BOLD}[1/7]${NC} Updating packages..."
+echo -e "${BOLD}[1/10]${NC} Updating packages..."
 if [ "$IS_TERMUX" = true ]; then
     pkg update -y 2>/dev/null || apt update -y
 else
@@ -50,7 +50,7 @@ fi
 echo -e "${GREEN}✓${NC} Packages updated"
 
 # ─── Step 2: Install Node.js ────────────────────────────────
-echo -e "${BOLD}[2/7]${NC} Installing Node.js..."
+echo -e "${BOLD}[2/10]${NC} Installing Node.js..."
 if command -v node &>/dev/null; then
     NODE_VERSION=$(node -v)
     echo -e "${GREEN}✓${NC} Node.js already installed: ${NODE_VERSION}"
@@ -79,21 +79,151 @@ if [ "$NODE_MAJOR" -lt 18 ]; then
 fi
 
 # ─── Step 4: Create project structure ───────────────────────
-echo -e "${BOLD}[3/7]${NC} Setting up project..."
+echo -e "${BOLD}[3/10]${NC} Setting up project..."
 
 mkdir -p "$SCRIPT_DIR/data/memory"
 mkdir -p "$SCRIPT_DIR/data/tts-cache"
 mkdir -p "$SCRIPT_DIR/models/piper"
+mkdir -p "$SCRIPT_DIR/models/whisper"
 mkdir -p "$SCRIPT_DIR/bin/piper"
+mkdir -p "$SCRIPT_DIR/bin/whisper"
 
 echo -e "${GREEN}✓${NC} Project structure ready"
 
-# ─── Step 5: Install Piper TTS ──────────────────────────────
-echo -e "${BOLD}[4/7]${NC} Installing Piper TTS..."
+# ─── Step 5: Install build dependencies ─────────────────────
+echo -e "${BOLD}[4/10]${NC} Installing build dependencies..."
+
+if [ "$IS_TERMUX" = true ]; then
+    pkg install cmake git ffmpeg sox -y 2>/dev/null || true
+else
+    sudo apt install -y cmake git ffmpeg sox libsox-dev 2>/dev/null || true
+fi
+
+if command -v ffmpeg &>/dev/null; then
+    echo -e "${GREEN}✓${NC} ffmpeg available"
+else
+    echo -e "${YELLOW}⚠${NC} ffmpeg not found (needed for audio conversion). Install: ${CYAN}pkg install ffmpeg${NC}"
+fi
+
+if command -v sox &>/dev/null; then
+    echo -e "${GREEN}✓${NC} sox available"
+else
+    echo -e "${YELLOW}⚠${NC} sox not found (fallback audio converter). Install: ${CYAN}pkg install sox${NC}"
+fi
+
+echo -e "${GREEN}✓${NC} Build dependencies ready"
+
+# ─── Step 6: Compile whisper.cpp ────────────────────────────
+echo -e "${BOLD}[5/10]${NC} Installing Whisper.cpp STT..."
+
+WHISPER_DIR="$SCRIPT_DIR/bin/whisper"
+WHISPER_BIN="$WHISPER_DIR/main"
+WHISPER_MODEL_DIR="$SCRIPT_DIR/models/whisper"
+
+if [ -f "$WHISPER_BIN" ]; then
+    echo -e "${GREEN}✓${NC} Whisper binary already compiled"
+else
+    echo -e "${DIM}  Compiling whisper.cpp from source...${NC}"
+    WHISPER_BUILD_DIR="/tmp/whisper-cpp-build"
+
+    rm -rf "$WHISPER_BUILD_DIR" 2>/dev/null || true
+    git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git "$WHISPER_BUILD_DIR" 2>/dev/null || {
+        echo -e "${YELLOW}⚠${NC} Git clone failed. Trying manual compilation..."
+    }
+
+    if [ -d "$WHISPER_BUILD_DIR" ]; then
+        cd "$WHISPER_BUILD_DIR"
+
+        # Build whisper.cpp
+        mkdir -p build && cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DWHISPER_NO_AVX=ON 2>/dev/null || cmake .. -DCMAKE_BUILD_TYPE=Release 2>/dev/null || {
+            echo -e "${YELLOW}⚠${NC} CMake configuration failed"
+        }
+
+        if [ -f "Makefile" ] || [ -f "build.ninja" ]; then
+            cmake --build . --config Release -j$(nproc 2>/dev/null || echo 2) 2>/dev/null || make -j$(nproc 2>/dev/null || echo 2) 2>/dev/null || {
+                echo -e "${YELLOW}⚠${NC} Compilation failed"
+            }
+        fi
+
+        # Copy binary if compiled
+        if [ -f "bin/main" ] || [ -f "main" ]; then
+            cp bin/main "$WHISPER_BIN" 2>/dev/null || cp main "$WHISPER_BIN" 2>/dev/null || true
+            chmod +x "$WHISPER_BIN" 2>/dev/null || true
+            echo -e "${GREEN}✓${NC} Whisper.cpp compiled and installed"
+        else
+            # Try the Makefile approach as fallback
+            cd "$WHISPER_BUILD_DIR"
+            make main -j$(nproc 2>/dev/null || echo 2) 2>/dev/null && {
+                cp main "$WHISPER_BIN" 2>/dev/null || true
+                chmod +x "$WHISPER_BIN" 2>/dev/null || true
+                echo -e "${GREEN}✓${NC} Whisper.cpp compiled (make) and installed"
+            } || {
+                echo -e "${YELLOW}⚠${NC} Whisper compilation failed. You can compile manually:"
+                echo -e "  ${CYAN}git clone https://github.com/ggerganov/whisper.cpp${NC}"
+                echo -e "  ${CYAN}cd whisper.cpp && make main${NC}"
+                echo -e "  ${CYAN}cp main $WHISPER_BIN${NC}"
+            }
+        fi
+
+        cd "$SCRIPT_DIR"
+    else
+        echo -e "${YELLOW}⚠${NC} Could not clone whisper.cpp. Install manually:"
+        echo -e "  ${CYAN}git clone https://github.com/ggerganov/whisper.cpp${NC}"
+        echo -e "  ${CYAN}cd whisper.cpp && make main${NC}"
+        echo -e "  ${CYAN}cp main $WHISPER_BIN${NC}"
+    fi
+
+    # Clean up build dir
+    rm -rf "$WHISPER_BUILD_DIR" 2>/dev/null || true
+fi
+
+# ─── Step 7: Download Whisper models ────────────────────────
+echo -e "${BOLD}[6/10]${NC} Downloading Whisper STT models..."
+
+# Tiny multilingual model (75MB) — best for Termux (fastest)
+TINY_MODEL="ggml-tiny.bin"
+TINY_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+
+if [ -f "$WHISPER_MODEL_DIR/$TINY_MODEL" ]; then
+    echo -e "${GREEN}✓${NC} Whisper tiny model already installed"
+else
+    echo -e "${DIM}  Downloading ${TINY_MODEL} (~75MB, multilingual)...${NC}"
+    DL_OK=false
+
+    if command -v wget &>/dev/null; then
+        wget -q "$TINY_MODEL_URL" -O "$WHISPER_MODEL_DIR/$TINY_MODEL" 2>/dev/null && DL_OK=true
+    elif command -v curl &>/dev/null; then
+        curl -sL "$TINY_MODEL_URL" -o "$WHISPER_MODEL_DIR/$TINY_MODEL" 2>/dev/null && DL_OK=true
+    fi
+
+    if [ "$DL_OK" = true ] && [ -f "$WHISPER_MODEL_DIR/$TINY_MODEL" ]; then
+        MODEL_SIZE=$(stat -c%s "$WHISPER_MODEL_DIR/$TINY_MODEL" 2>/dev/null || stat -f%z "$WHISPER_MODEL_DIR/$TINY_MODEL" 2>/dev/null || echo "?")
+        echo -e "${GREEN}✓${NC} Whisper tiny model downloaded (${MODEL_SIZE} bytes)"
+    else
+        echo -e "${YELLOW}⚠${NC} Model download failed. Download manually:"
+        echo -e "  ${CYAN}$TINY_MODEL_URL${NC}"
+        echo -e "  Save to: ${WHISPER_MODEL_DIR}/"
+    fi
+fi
+
+# Base model (142MB, optional — better quality)
+BASE_MODEL="ggml-base.bin"
+BASE_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+
+if [ -f "$WHISPER_MODEL_DIR/$BASE_MODEL" ]; then
+    echo -e "${GREEN}✓${NC} Whisper base model already installed"
+else
+    echo -e "${DIM}  Skipping base model (optional, ~142MB). Install with:${NC}"
+    echo -e "  ${DIM}wget $BASE_MODEL_URL -O $WHISPER_MODEL_DIR/$BASE_MODEL${NC}"
+fi
+
+# ─── Step 8: Install Piper TTS ──────────────────────────────
+echo -e "${BOLD}[7/10]${NC} Installing Piper TTS..."
 
 PIPER_DIR="$SCRIPT_DIR/bin/piper"
 PIPER_BIN="$PIPER_DIR/piper"
-MODEL_DIR="$SCRIPT_DIR/models/piper"
+PIPER_MODEL_DIR="$SCRIPT_DIR/models/piper"
 
 # Detect architecture
 ARCH=$(uname -m)
@@ -140,37 +270,37 @@ else
     fi
 fi
 
-# ─── Step 6: Download voice models ──────────────────────────
-echo -e "${BOLD}[5/7]${NC} Downloading voice models (Spanish male)..."
+# ─── Step 9: Download voice models ──────────────────────────
+echo -e "${BOLD}[8/10]${NC} Downloading voice models (Spanish male)..."
 
 # Spanish male voice — Carlos (high quality)
 ES_MODEL="es_ES-carlfm-high"
 ES_MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/carlfm/high/es_ES-carlfm-high.onnx"
 ES_CONFIG_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/carlfm/high/es_ES-carlfm-high.onnx.json"
 
-if [ -f "$MODEL_DIR/${ES_MODEL}.onnx" ]; then
+if [ -f "$PIPER_MODEL_DIR/${ES_MODEL}.onnx" ]; then
     echo -e "${GREEN}✓${NC} Spanish voice already installed: ${ES_MODEL}"
 else
     echo -e "${DIM}  Downloading ${ES_MODEL}...${NC}"
     DL_OK=true
 
     if command -v wget &>/dev/null; then
-        wget -q "$ES_MODEL_URL" -O "$MODEL_DIR/${ES_MODEL}.onnx" 2>/dev/null || DL_OK=false
-        wget -q "$ES_CONFIG_URL" -O "$MODEL_DIR/${ES_MODEL}.onnx.json" 2>/dev/null || DL_OK=false
+        wget -q "$ES_MODEL_URL" -O "$PIPER_MODEL_DIR/${ES_MODEL}.onnx" 2>/dev/null || DL_OK=false
+        wget -q "$ES_CONFIG_URL" -O "$PIPER_MODEL_DIR/${ES_MODEL}.onnx.json" 2>/dev/null || DL_OK=false
     elif command -v curl &>/dev/null; then
-        curl -sL "$ES_MODEL_URL" -o "$MODEL_DIR/${ES_MODEL}.onnx" 2>/dev/null || DL_OK=false
-        curl -sL "$ES_CONFIG_URL" -o "$MODEL_DIR/${ES_MODEL}.onnx.json" 2>/dev/null || DL_OK=false
+        curl -sL "$ES_MODEL_URL" -o "$PIPER_MODEL_DIR/${ES_MODEL}.onnx" 2>/dev/null || DL_OK=false
+        curl -sL "$ES_CONFIG_URL" -o "$PIPER_MODEL_DIR/${ES_MODEL}.onnx.json" 2>/dev/null || DL_OK=false
     else
         DL_OK=false
     fi
 
-    if [ "$DL_OK" = true ] && [ -f "$MODEL_DIR/${ES_MODEL}.onnx" ]; then
+    if [ "$DL_OK" = true ] && [ -f "$PIPER_MODEL_DIR/${ES_MODEL}.onnx" ]; then
         echo -e "${GREEN}✓${NC} Spanish male voice installed: Carlos (${ES_MODEL})"
     else
         echo -e "${YELLOW}⚠${NC} Voice download failed. Install manually:"
         echo -e "  ${CYAN}$ES_MODEL_URL${NC}"
         echo -e "  ${CYAN}$ES_CONFIG_URL${NC}"
-        echo -e "  Save to: ${MODEL_DIR}/"
+        echo -e "  Save to: ${PIPER_MODEL_DIR}/"
     fi
 fi
 
@@ -179,28 +309,28 @@ EN_MODEL="en_US-danny-medium"
 EN_MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/danny-medium/en_US-danny-medium.onnx"
 EN_CONFIG_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/danny-medium/en_US-danny-medium.onnx.json"
 
-if [ -f "$MODEL_DIR/${EN_MODEL}.onnx" ]; then
+if [ -f "$PIPER_MODEL_DIR/${EN_MODEL}.onnx" ]; then
     echo -e "${GREEN}✓${NC} English voice already installed: ${EN_MODEL}"
 else
     echo -e "${DIM}  Downloading ${EN_MODEL} (English, optional)...${NC}"
     if command -v wget &>/dev/null; then
-        wget -q "$EN_MODEL_URL" -O "$MODEL_DIR/${EN_MODEL}.onnx" 2>/dev/null || true
-        wget -q "$EN_CONFIG_URL" -O "$MODEL_DIR/${EN_MODEL}.onnx.json" 2>/dev/null || true
+        wget -q "$EN_MODEL_URL" -O "$PIPER_MODEL_DIR/${EN_MODEL}.onnx" 2>/dev/null || true
+        wget -q "$EN_CONFIG_URL" -O "$PIPER_MODEL_DIR/${EN_MODEL}.onnx.json" 2>/dev/null || true
     elif command -v curl &>/dev/null; then
-        curl -sL "$EN_MODEL_URL" -o "$MODEL_DIR/${EN_MODEL}.onnx" 2>/dev/null || true
-        curl -sL "$EN_CONFIG_URL" -o "$MODEL_DIR/${EN_MODEL}.onnx.json" 2>/dev/null || true
+        curl -sL "$EN_MODEL_URL" -o "$PIPER_MODEL_DIR/${EN_MODEL}.onnx" 2>/dev/null || true
+        curl -sL "$EN_CONFIG_URL" -o "$PIPER_MODEL_DIR/${EN_MODEL}.onnx.json" 2>/dev/null || true
     fi
 
-    if [ -f "$MODEL_DIR/${EN_MODEL}.onnx" ]; then
+    if [ -f "$PIPER_MODEL_DIR/${EN_MODEL}.onnx" ]; then
         echo -e "${GREEN}✓${NC} English male voice installed: Danny (${EN_MODEL})"
     else
         echo -e "${DIM}  English voice skipped (optional)${NC}"
     fi
 fi
 
-# ─── Step 7: Install Termux TTS (fallback) ──────────────────
+# ─── Install Termux TTS (fallback) ─────────────────────────
 if [ "$IS_TERMUX" = true ]; then
-    echo -e "${BOLD}[6/7]${NC} Installing Termux TTS (fallback)..."
+    echo -e "${BOLD}[9/10]${NC} Installing Termux TTS (fallback)..."
     pkg install termux-api -y 2>/dev/null || true
     if command -v termux-tts-speak &>/dev/null; then
         echo -e "${GREEN}✓${NC} termux-tts-speak available"
@@ -208,11 +338,11 @@ if [ "$IS_TERMUX" = true ]; then
         echo -e "${YELLOW}⚠${NC} termux-tts-speak not found. Install: ${CYAN}pkg install termux-api${NC}"
     fi
 else
-    echo -e "${BOLD}[6/7]${NC} Skipping Termux TTS (not Termux)"
+    echo -e "${BOLD}[9/10]${NC} Skipping Termux TTS (not Termux)"
 fi
 
-# ─── Step 8: Configure API Key ──────────────────────────────
-echo -e "${BOLD}[7/7]${NC} API Key configuration..."
+# ─── Step 10: Configure API Key ─────────────────────────────
+echo -e "${BOLD}[10/10]${NC} API Key configuration..."
 echo ""
 echo -e "  Get your Mistral API key at:"
 echo -e "  ${CYAN}https://console.mistral.ai/${NC}"
@@ -269,11 +399,31 @@ else
     echo -e "${GREEN}✓${NC} index.js found"
 fi
 
+if [ ! -f "$SCRIPT_DIR/stt.js" ]; then
+    echo -e "${RED}✗${NC} stt.js not found"
+    ERRORS=$((ERRORS + 1))
+else
+    echo -e "${GREEN}✓${NC} stt.js (Whisper STT module) found"
+fi
+
 if [ ! -f "$SCRIPT_DIR/tts.js" ]; then
     echo -e "${RED}✗${NC} tts.js not found"
     ERRORS=$((ERRORS + 1))
 else
     echo -e "${GREEN}✓${NC} tts.js (Piper TTS module) found"
+fi
+
+if [ -f "$WHISPER_BIN" ]; then
+    echo -e "${GREEN}✓${NC} Whisper STT binary: $WHISPER_BIN"
+else
+    echo -e "${YELLOW}⚠${NC} Whisper binary not found (STT will use browser SpeechRecognition fallback)"
+fi
+
+if [ -f "$WHISPER_MODEL_DIR/$TINY_MODEL" ]; then
+    WSIZE=$(stat -c%s "$WHISPER_MODEL_DIR/$TINY_MODEL" 2>/dev/null || stat -f%z "$WHISPER_MODEL_DIR/$TINY_MODEL" 2>/dev/null || echo "?")
+    echo -e "${GREEN}✓${NC} Whisper tiny model: ${TINY_MODEL} (${WSIZE} bytes)"
+else
+    echo -e "${YELLOW}⚠${NC} Whisper model not found (STT will use browser fallback)"
 fi
 
 if [ -f "$PIPER_BIN" ]; then
@@ -282,11 +432,17 @@ else
     echo -e "${YELLOW}⚠${NC} Piper binary not found (TTS will use browser fallback)"
 fi
 
-if [ -f "$MODEL_DIR/${ES_MODEL}.onnx" ]; then
-    MODEL_SIZE=$(stat -c%s "$MODEL_DIR/${ES_MODEL}.onnx" 2>/dev/null || stat -f%z "$MODEL_DIR/${ES_MODEL}.onnx" 2>/dev/null || echo "?")
-    echo -e "${GREEN}✓${NC} Spanish male voice: ${ES_MODEL} (${MODEL_SIZE} bytes)"
+if [ -f "$PIPER_MODEL_DIR/${ES_MODEL}.onnx" ]; then
+    PSIZE=$(stat -c%s "$PIPER_MODEL_DIR/${ES_MODEL}.onnx" 2>/dev/null || stat -f%z "$PIPER_MODEL_DIR/${ES_MODEL}.onnx" 2>/dev/null || echo "?")
+    echo -e "${GREEN}✓${NC} Spanish male voice: ${ES_MODEL} (${PSIZE} bytes)"
 else
     echo -e "${YELLOW}⚠${NC} Spanish voice not found (download from HuggingFace)"
+fi
+
+if command -v ffmpeg &>/dev/null; then
+    echo -e "${GREEN}✓${NC} ffmpeg available (audio conversion)"
+else
+    echo -e "${YELLOW}⚠${NC} ffmpeg not found (needed for server-side STT audio conversion)"
 fi
 
 if [ -z "$MISTRAL_API_KEY" ]; then
@@ -296,19 +452,23 @@ fi
 echo ""
 if [ $ERRORS -eq 0 ]; then
     echo -e "${GREEN}════════════════════════════════════════${NC}"
-    echo -e "${GREEN}  JARVIS Setup Complete!${NC}"
+    echo -e "${GREEN}  JARVIS v3.0 Setup Complete!${NC}"
     echo -e "${GREEN}════════════════════════════════════════${NC}"
     echo ""
-    echo -e "  ${CYAN}CLI mode (text commands):${NC}"
+    echo -e "  ${CYAN}STT: Whisper.cpp (ggml-tiny, multilingual)${NC}"
+    echo -e "  ${CYAN}TTS: Piper (es_ES-carlfm-high, Spanish male)${NC}"
+    echo -e "  ${CYAN}LLM: Mistral Small (api.mistral.ai)${NC}"
+    echo ""
+    echo -e "  ${BOLD}CLI mode (text commands):${NC}"
     echo -e "  ${BOLD}cd $SCRIPT_DIR && node index.js${NC}"
     echo ""
-    echo -e "  ${CYAN}Web mode (voice interface):${NC}"
+    echo -e "  ${BOLD}Web mode (voice interface):${NC}"
     echo -e "  ${BOLD}cd $SCRIPT_DIR && node index.js --web${NC}"
     echo ""
     echo -e "  Then open ${CYAN}http://localhost:8080${NC} on your phone"
     echo ""
-    echo -e "  ${DIM}Voice: es_ES-carlfm-high (Spanish male, Piper TTS)${NC}"
-    echo -e "  ${DIM}Fallback: Browser SpeechSynthesis if Piper unavailable${NC}"
+    echo -e "  ${DIM}Pipeline: Voice → Whisper STT → Mistral → Piper TTS → Audio${NC}"
+    echo -e "  ${DIM}Fallback: Browser SpeechRecognition/SpeechSynthesis if local models unavailable${NC}"
     echo ""
 else
     echo -e "${RED}Setup completed with $ERRORS error(s). Fix them and try again.${NC}"
