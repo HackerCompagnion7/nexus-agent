@@ -1,8 +1,8 @@
 /**
  * ═══════════════════════════════════════════════════════════════
  *  NEXUS — Autonomous Agent Entry Point
- *  State machine, agent loop, CLI interface, and web server
- *  for mobile access. Zero external dependencies.
+ *  State machine, agent loop, Termux CLI + web server.
+ *  Zero external dependencies.
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -18,6 +18,80 @@ const { LLMClient, TokenEstimator, CONFIG } = require('./llm');
 const { ToolRegistry, ToolExecutor, BUILT_IN_TOOLS } = require('./tools');
 const { MemorySystem } = require('./memory');
 const { Coordinator, TASK_STATE } = require('./coordinator');
+
+// ─── ANSI Colors (Termux compatible) ──────────────────────────
+const C = {
+  reset:   '\x1b[0m',
+  bold:    '\x1b[1m',
+  dim:     '\x1b[2m',
+  italic:  '\x1b[3m',
+  // Foreground
+  black:   '\x1b[30m',
+  red:     '\x1b[31m',
+  green:   '\x1b[32m',
+  yellow:  '\x1b[33m',
+  blue:    '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan:    '\x1b[36m',
+  white:   '\x1b[37m',
+  // Bright
+  bred:    '\x1b[91m',
+  bgreen:  '\x1b[92m',
+  byellow: '\x1b[93m',
+  bblue:   '\x1b[94m',
+  bmagenta:'\x1b[95m',
+  bcyan:   '\x1b[96m',
+  bwhite:  '\x1b[97m',
+  // Background
+  bgBlue:  '\x1b[44m',
+  bgMagenta:'\x1b[45m',
+  bgBlack: '\x1b[40m',
+  // Special
+  clear:   '\x1b[2J\x1b[H',
+  hideCursor: '\x1b[?25l',
+  showCursor: '\x1b[?25h',
+};
+
+// ─── Terminal Utilities ────────────────────────────────────────
+const Term = {
+  isTermux: !!process.env.TERMUX_VERSION || fs.existsSync('/data/data/com.termux'),
+  width: process.stdout.columns || 80,
+  height: process.stdout.rows || 24,
+
+  supportsColor() {
+    return process.env.TERM !== 'dumb' && process.stdout.isTTY;
+  },
+
+  wrap(text, maxWidth) {
+    maxWidth = maxWidth || (this.width - 4);
+    if (maxWidth < 20) maxWidth = 20;
+    const words = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\s+/);
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+      if ((line + ' ' + word).trim().length > maxWidth) {
+        if (line) lines.push(line);
+        line = word;
+      } else {
+        line = line ? line + ' ' + word : word;
+      }
+    }
+    if (line) lines.push(line);
+    return lines.join('\n');
+  },
+
+  progressBar(current, total, width = 20) {
+    const ratio = Math.min(current / total, 1);
+    const filled = Math.round(ratio * width);
+    const empty = width - filled;
+    const bar = C.bmagenta + '\u2588'.repeat(filled) + C.dim + '\u2591'.repeat(empty) + C.reset;
+    return `[${bar}] ${Math.round(ratio * 100)}%`;
+  },
+
+  divider(char = '\u2500', color = C.dim) {
+    return color + char.repeat(Math.min(this.width - 2, 60)) + C.reset;
+  }
+};
 
 // ─── Agent States ─────────────────────────────────────────────
 const AGENT_STATE = {
@@ -39,7 +113,6 @@ class NexusAgent {
     this.state = AGENT_STATE.INITIALIZING;
     this.sessionStart = new Date().toISOString();
 
-    // Core components (initialized in start())
     this.llm = null;
     this.tools = null;
     this.executor = null;
@@ -47,30 +120,26 @@ class NexusAgent {
     this.coordinator = null;
     this.systemPrompt = '';
 
-    // Conversation tracking
     this.conversationHistory = [];
-    this.maxConversationLength = 50; // messages before auto-summarization
+    this.maxConversationLength = 50;
 
-    // Event handlers
     this.eventHandlers = {
       onStateChange: options.onStateChange || (() => {}),
       onToken: options.onToken || (() => {}),
       onToolResult: options.onToolResult || (() => {}),
+      onToolStart: options.onToolStart || (() => {}),
       onMessage: options.onMessage || (() => {}),
       onError: options.onError || (() => {})
     };
 
-    // Consolidation interval (dream cycle)
     this.consolidationInterval = null;
-    this.consolidationFrequency = options.consolidationFrequency || 5 * 60 * 1000; // 5 min
+    this.consolidationFrequency = options.consolidationFrequency || 5 * 60 * 1000;
   }
 
-  // ─── Initialize all subsystems ───────────────────────────
   async start() {
     try {
       this._setState(AGENT_STATE.INITIALIZING);
 
-      // 1. Initialize LLM client
       if (!this.apiKey) {
         throw new Error(
           'NVIDIA_API_KEY not set.\n' +
@@ -78,54 +147,37 @@ class NexusAgent {
           'Then run: export NVIDIA_API_KEY="your-key-here"'
         );
       }
-      this.llm = new LLMClient(this.apiKey, {
-        maxTokens: 4096,
-        temperature: 0.7
-      });
 
-      // 2. Initialize tool system
+      this.llm = new LLMClient(this.apiKey, { maxTokens: 4096, temperature: 0.7 });
+
       this.tools = new ToolRegistry();
-      this.executor = new ToolExecutor({
-        sandboxDir: this.workingDir,
-        defaultTimeout: 30000
-      });
+      this.executor = new ToolExecutor({ sandboxDir: this.workingDir, defaultTimeout: 30000 });
 
-      // Connect memory_query tool to actual memory
       this._connectMemoryTool();
 
-      // 3. Initialize memory
       this.memory = new MemorySystem(path.join(this.dataDir, 'memory'));
       this.memory.initialize();
 
-      // 4. Initialize coordinator
       this.coordinator = new Coordinator(this.llm, (name, params, opts) =>
         this.executor.execute(name, params, opts), {
         maxWorkers: 2,
-        systemPrompt: '' // Set after system prompt load
+        systemPrompt: ''
       });
 
-      // 5. Load and configure system prompt
       this.systemPrompt = this._buildSystemPrompt();
-
-      // Update coordinator's system prompt
       this.coordinator.systemPrompt = this.systemPrompt;
 
-      // 6. Start consolidation cycle
       this.consolidationInterval = setInterval(() => {
         this._runConsolidation();
       }, this.consolidationFrequency);
 
-      // 7. Load user preferences
       const prefs = this.memory.storage.getPreferences();
       if (prefs.instructions.length > 0) {
-        console.log(`[Nexus] Loaded ${prefs.instructions.length} user preferences`);
+        this.eventHandlers.onMessage(`Loaded ${prefs.instructions.length} user preferences`);
       }
 
       this._setState(AGENT_STATE.IDLE);
-      console.log('[Nexus] Agent initialized and ready.');
-      console.log(`[Nexus] Model: ${CONFIG.model}`);
-      console.log(`[Nexus] Working dir: ${this.workingDir}`);
-      console.log(`[Nexus] Memory: ${this.memory.getStats().totalFacts} facts loaded`);
+      return true;
 
     } catch (error) {
       this._setState(AGENT_STATE.ERROR);
@@ -134,29 +186,19 @@ class NexusAgent {
     }
   }
 
-  // ─── Process a user message ──────────────────────────────
   async processMessage(userMessage) {
     this._setState(AGENT_STATE.THINKING);
 
     try {
-      // Add to conversation
-      this.conversationHistory.push({
-        role: 'user',
-        content: userMessage,
-        timestamp: Date.now()
-      });
+      this.conversationHistory.push({ role: 'user', content: userMessage, timestamp: Date.now() });
 
-      // Check for meta-commands
       const metaResult = this._handleMetaCommand(userMessage);
       if (metaResult) {
         this._setState(AGENT_STATE.IDLE);
         return metaResult;
       }
 
-      // Build messages with memory context
       const messages = this._buildMessages();
-
-      // Execute agent loop
       this._setState(AGENT_STATE.EXECUTING);
 
       const result = await this.llm.agentLoop(
@@ -167,34 +209,22 @@ class NexusAgent {
           maxIterations: 15,
           stream: true,
           onToken: (token) => this.eventHandlers.onToken(token),
-          onToolResult: (result) => {
-            this.eventHandlers.onToolResult(result);
-          },
+          onToolResult: (result) => this.eventHandlers.onToolResult(result),
           onSummarizationNeeded: async (history, tokens) => {
-            console.log(`[Nexus] Context window at ${tokens} tokens, triggering auto-summarization`);
             this._autoSummarize();
           }
         }
       );
 
-      // Add assistant response to history
-      this.conversationHistory.push({
-        role: 'assistant',
-        content: result.content,
-        timestamp: Date.now()
-      });
-
-      // Extract and store facts from this exchange
+      this.conversationHistory.push({ role: 'assistant', content: result.content, timestamp: Date.now() });
       this.memory.extractAndStore(userMessage, result.content);
 
-      // Auto-summarize if conversation is getting long
       if (this.conversationHistory.length > this.maxConversationLength) {
         this._autoSummarize();
       }
 
       this._setState(AGENT_STATE.IDLE);
       this.eventHandlers.onMessage(result.content);
-
       return result.content;
 
     } catch (error) {
@@ -204,18 +234,13 @@ class NexusAgent {
     }
   }
 
-  // ─── Submit a task to the coordinator ────────────────────
   async submitTask(description) {
     const task = await this.coordinator.submit(description);
-    const result = await this.coordinator.execute(task, this.tools.getToolDefinitions());
-    return result;
+    return await this.coordinator.execute(task, this.tools.getToolDefinitions());
   }
 
-  // ─── Build messages array with context ───────────────────
   _buildMessages() {
     const messages = [];
-
-    // System prompt with current memory context
     const memoryContext = this.memory.formatContextForPrompt(
       this.conversationHistory[this.conversationHistory.length - 1]?.content || ''
     );
@@ -228,157 +253,118 @@ class NexusAgent {
 
     messages.push({ role: 'system', content: systemContent });
 
-    // Add conversation history (with sliding window)
     const maxHistoryMessages = 20;
     const historySlice = this.conversationHistory.slice(-maxHistoryMessages);
 
     for (const msg of historySlice) {
-      messages.push({
-        role: msg.role,
-        content: msg.content
-      });
+      messages.push({ role: msg.role, content: msg.content });
     }
 
     return messages;
   }
 
-  // ─── Build system prompt ─────────────────────────────────
   _buildSystemPrompt() {
     const promptPath = path.join(__dirname, 'system.md');
-    if (fs.existsSync(promptPath)) {
-      return fs.readFileSync(promptPath, 'utf-8');
-    }
-    // Fallback system prompt
-    return `You are NEXUS, an autonomous AI agent. Execute tasks using the available tools. Follow the plan-execute-verify-report protocol. {{MEMORY_CONTEXT}} Working dir: {{WORKING_DIR}} Platform: {{PLATFORM}} Session: {{SESSION_START}}`;
+    if (fs.existsSync(promptPath)) return fs.readFileSync(promptPath, 'utf-8');
+    return `You are NEXUS, an autonomous AI agent. Execute tasks using available tools. {{MEMORY_CONTEXT}} Working dir: {{WORKING_DIR}} Platform: {{PLATFORM}} Session: {{SESSION_START}}`;
   }
 
-  // ─── Handle meta-commands ────────────────────────────────
   _handleMetaCommand(message) {
     const cmd = message.trim().toLowerCase();
 
     if (cmd === '/status' || cmd === '/stats') {
-      const stats = this.getStats();
-      return `**NEXUS Status**\n` +
-        `- State: ${stats.state}\n` +
-        `- Model: ${stats.model}\n` +
-        `- Memory: ${stats.memory.totalFacts} facts, ${stats.memory.totalSummaries} summaries\n` +
-        `- Conversation: ${stats.conversationLength} messages\n` +
-        `- API Requests: ${stats.apiRequests}\n` +
-        `- Working Dir: ${stats.workingDir}`;
+      const s = this.getStats();
+      return [
+        `${C.bmagenta}${C.bold}NEXUS Status${C.reset}`,
+        `${C.cyan}State:${C.reset}     ${this._stateLabel(s.state)}`,
+        `${C.cyan}Model:${C.reset}     ${s.model}`,
+        `${C.cyan}Memory:${C.reset}    ${s.memory.totalFacts} facts, ${s.memory.totalSummaries} summaries`,
+        `${C.cyan}Messages:${C.reset}  ${s.conversationLength}`,
+        `${C.cyan}API Calls:${C.reset} ${s.apiRequests}`,
+        `${C.cyan}Work Dir:${C.reset}  ${s.workingDir}`,
+      ].join('\n');
     }
 
     if (cmd === '/memory') {
-      const memStats = this.memory.getStats();
-      return `**Memory System**\n` +
-        `- Facts: ${memStats.totalFacts}\n` +
-        `- Summaries: ${memStats.totalSummaries}\n` +
-        `- Active Context: ${memStats.activeContext}\n` +
-        `- User Instructions: ${memStats.userInstructions}\n` +
-        `- Types: ${JSON.stringify(memStats.memoryTypes)}`;
+      const m = this.memory.getStats();
+      return [
+        `${C.bmagenta}${C.bold}Memory System${C.reset}`,
+        `${C.cyan}Facts:${C.reset}      ${m.totalFacts}`,
+        `${C.cyan}Summaries:${C.reset}  ${m.totalSummaries}`,
+        `${C.cyan}Context:${C.reset}    ${m.activeContext} active, ${m.archivedContext} archived`,
+        `${C.cyan}Instructions:${C.reset} ${m.userInstructions}`,
+      ].join('\n');
     }
 
     if (cmd === '/consolidate') {
       this._runConsolidation();
-      return 'Memory consolidation triggered.';
+      return `${C.bgreen}Memory consolidation triggered.${C.reset}`;
     }
 
     if (cmd === '/clear') {
       this.conversationHistory = [];
-      return 'Conversation history cleared.';
+      return `${C.bgreen}Conversation history cleared.${C.reset}`;
     }
 
     if (cmd === '/help') {
-      return `**NEXUS Commands**\n` +
-        `/status  — Show agent status\n` +
-        `/memory  — Show memory stats\n` +
-        `/consolidate — Run memory consolidation\n` +
-        `/clear   — Clear conversation history\n` +
-        `/help    — Show this help\n` +
-        `/exit    — Exit the agent\n\n` +
-        `Or just type your task and I'll execute it.`;
+      return [
+        `${C.bmagenta}${C.bold}NEXUS Commands${C.reset}`,
+        `${C.bcyan}/status${C.reset}     Show agent status`,
+        `${C.bcyan}/memory${C.reset}     Show memory stats`,
+        `${C.bcyan}/consolidate${C.reset} Run memory consolidation`,
+        `${C.bcyan}/clear${C.reset}      Clear conversation history`,
+        `${C.bcyan}/help${C.reset}       Show this help`,
+        `${C.bcyan}/exit${C.reset}       Exit the agent`,
+        '',
+        `${C.dim}Or type your task and I'll execute it.${C.reset}`,
+      ].join('\n');
     }
 
     if (cmd === '/exit' || cmd === '/quit') {
       this.shutdown();
-      return 'Goodbye.';
+      return 'exit';
     }
 
-    // Not a meta-command
     return null;
   }
 
-  // ─── Auto-summarize conversation ─────────────────────────
+  _stateLabel(state) {
+    const labels = {
+      initializing: `${C.byellow}\u25CB initializing${C.reset}`,
+      idle:         `${C.bgreen}\u25CF idle${C.reset}`,
+      thinking:     `${C.bcyan}\u25CC thinking${C.reset}`,
+      executing:    `${C.bmagenta}\u25CE executing${C.reset}`,
+      error:        `${C.bred}\u25CF error${C.reset}`,
+      shutting_down:`${C.dim}\u25CB shutting down${C.reset}`,
+    };
+    return labels[state] || state;
+  }
+
   _autoSummarize() {
     if (this.conversationHistory.length < 6) return;
-
-    const topic = this.conversationHistory
-      .filter(m => m.role === 'user')
-      .map(m => m.content.slice(0, 50))
-      .join(', ');
-
+    const topic = this.conversationHistory.filter(m => m.role === 'user').map(m => m.content.slice(0, 50)).join(', ');
     this.memory.addSummary(this.conversationHistory, topic);
-
-    // Keep only the most recent messages
     const keepCount = Math.floor(this.maxConversationLength / 2);
     this.conversationHistory = this.conversationHistory.slice(-keepCount);
-
-    console.log('[Nexus] Auto-summarized conversation, history trimmed');
   }
 
-  // ─── Run consolidation cycle ─────────────────────────────
   _runConsolidation() {
-    try {
-      this.memory.consolidate();
-    } catch (error) {
-      console.error('[Nexus] Consolidation error:', error.message);
-    }
+    try { this.memory.consolidate(); } catch (e) { /* silent */ }
   }
 
-  // ─── Connect memory tool to memory system ────────────────
   _connectMemoryTool() {
-    const originalHandler = BUILT_IN_TOOLS.memory_query.handler;
     BUILT_IN_TOOLS.memory_query.handler = async (params) => {
-      if (!this.memory) return originalHandler(params);
-      const results = this.memory.query(params.query, params.type, params.limit);
-      return JSON.stringify(results, null, 2);
+      if (!this.memory) return '[]';
+      return JSON.stringify(this.memory.query(params.query, params.type, params.limit), null, 2);
     };
-
-    // Add memory_store tool
-    this.tools && this.tools.register({
-      name: 'memory_store',
-      description: 'Store a fact or piece of information in persistent memory for future reference.',
-      parameters: {
-        type: 'object',
-        properties: {
-          content: { type: 'string', description: 'The fact or information to store' },
-          type: { type: 'string', enum: ['fact', 'instruction', 'context'], default: 'fact' },
-          priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'], default: 'medium' }
-        },
-        required: ['content']
-      },
-      handler: async (params) => {
-        const priorityMap = { critical: 0, high: 1, medium: 2, low: 3 };
-        this.memory.storeFact({
-          content: params.content,
-          type: params.type || 'fact',
-          priority: priorityMap[params.priority] || 2,
-          source: 'agent_stored'
-        });
-        return `Stored: "${params.content.slice(0, 50)}..."`;
-      }
-    });
   }
 
-  // ─── State management ────────────────────────────────────
   _setState(newState) {
     const oldState = this.state;
     this.state = newState;
-    if (oldState !== newState) {
-      this.eventHandlers.onStateChange(newState, oldState);
-    }
+    if (oldState !== newState) this.eventHandlers.onStateChange(newState, oldState);
   }
 
-  // ─── Get comprehensive stats ─────────────────────────────
   getStats() {
     return {
       state: this.state,
@@ -392,84 +378,112 @@ class NexusAgent {
     };
   }
 
-  // ─── Graceful shutdown ───────────────────────────────────
   async shutdown() {
     this._setState(AGENT_STATE.SHUTTING_DOWN);
-    console.log('[Nexus] Shutting down...');
-
-    if (this.consolidationInterval) {
-      clearInterval(this.consolidationInterval);
-    }
-
-    // Final consolidation
-    if (this.memory) {
-      this._runConsolidation();
-    }
-
-    // Save conversation summary
-    if (this.conversationHistory.length > 0) {
-      this.memory?.addSummary(this.conversationHistory, 'session-end');
-    }
-
+    if (this.consolidationInterval) clearInterval(this.consolidationInterval);
+    if (this.memory) this._runConsolidation();
+    if (this.conversationHistory.length > 0) this.memory?.addSummary(this.conversationHistory, 'session-end');
     this.coordinator?.stop();
-    console.log('[Nexus] Shutdown complete.');
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  CLI INTERFACE — Interactive terminal mode
+//  TERMUX CLI — Native terminal experience
 // ═══════════════════════════════════════════════════════════════
 
 async function startCLI() {
+  const W = Term.width;
+  const env = Term.isTermux ? 'Termux/Android' : `${os.type()}/${os.arch()}`;
+
+  // ─── Banner ──────────────────────────────────────────────
   console.log(`
-╔═══════════════════════════════════════════╗
-║                                           ║
-║   ███╗   ██╗███████╗██╗  ██╗██╗   ██╗    ║
-║   ████╗  ██║██╔════╝╚██╗██╔╝╚██╗ ██╔╝    ║
-║   ██╔██╗ ██║█████╗   ╚███╔╝  ╚████╔╝     ║
-║   ██║╚██╗██║██╔══╝   ██╔██╗   ╚██╔╝      ║
-║   ██║ ╚████║███████╗██╔╝ ██╗   ██║       ║
-║   ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝   ╚═╝       ║
-║                                           ║
-║   Autonomous Agent v1.0                   ║
-║   Mistral Small · NVIDIA API              ║
-║                                           ║
-╚═══════════════════════════════════════════╝
-  `);
+${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
+
+${C.bmagenta}${C.bold}  _   _  _   _  ___  ___  ___  ___  ___ ${C.reset}
+${C.bmagenta}${C.bold} | \\ | || \\ | || __)/ __|| __|| _ \\/ __|${C.reset}
+${C.bmagenta}${C.bold} |  \\| ||  \\| || _| \\__ \\| _| |   /\\__ \\${C.reset}
+${C.bmagenta}${C.bold} |_|\\_||_|\\_|||___||___/|___||_|_\\|___/${C.reset}
+
+${C.dim}  Autonomous Agent v1.0${C.reset}
+${C.cyan}  Mistral Small 4 \u00B7 NVIDIA API \u00B7 ${env}${C.reset}
+
+${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}
+`);
+
+  // ─── Create Agent ────────────────────────────────────────
+  let currentLine = '';
+  let toolCount = 0;
+  let isStreaming = false;
 
   const agent = new NexusAgent({
     dataDir: path.join(__dirname, 'data'),
     workingDir: process.cwd(),
     onStateChange: (newState, oldState) => {
-      if (newState === AGENT_STATE.THINKING) process.stdout.write('\n🧠 ');
-      if (newState === AGENT_STATE.EXECUTING) process.stdout.write('⚙️ ');
-      if (newState === AGENT_STATE.IDLE) process.stdout.write('\n');
+      if (newState === AGENT_STATE.THINKING) {
+        process.stdout.write(`\n${C.bcyan}\u25CC Thinking...${C.reset}\n`);
+      }
+      if (newState === AGENT_STATE.EXECUTING) {
+        toolCount = 0;
+        process.stdout.write(`${C.bmagenta}\u25CE Executing${C.reset}\n`);
+      }
+      if (newState === AGENT_STATE.IDLE && isStreaming) {
+        process.stdout.write('\n');
+        isStreaming = false;
+      }
     },
     onToken: (token) => {
+      if (!isStreaming) {
+        isStreaming = true;
+        process.stdout.write(`${C.bwhite}`);
+      }
       process.stdout.write(token);
     },
+    onToolStart: (toolName) => {
+      toolCount++;
+      process.stdout.write(`${C.dim}  \u2192 ${C.cyan}${toolName}${C.dim}...${C.reset}\r`);
+    },
     onToolResult: (result) => {
-      const icon = result.success ? '✓' : '✗';
-      console.log(`  ${icon} ${result.name} (${result.executionTime}ms)`);
+      const icon = result.success ? `${C.bgreen}\u2713${C.reset}` : `${C.bred}\u2717${C.reset}`;
+      const time = result.executionTime > 1000
+        ? `${(result.executionTime / 1000).toFixed(1)}s`
+        : `${result.executionTime}ms`;
+      process.stdout.write(`  ${icon} ${C.cyan}${result.name}${C.reset} ${C.dim}${time}${C.reset}  \n`);
     },
     onError: (error) => {
-      console.error(`\n❌ Error: ${error.message}`);
+      process.stdout.write(`\n${C.bred}\u2717 ${error.message}${C.reset}\n`);
+    },
+    onMessage: (msg) => {
+      if (!isStreaming) {
+        // Non-streamed message (meta-command result)
+        process.stdout.write(`${msg}\n`);
+      }
     }
   });
 
+  // ─── Initialize ──────────────────────────────────────────
   try {
+    process.stdout.write(`${C.dim}  Initializing...${C.reset}\r`);
+
     await agent.start();
+
+    const memStats = agent.memory.getStats();
+    process.stdout.write(`${C.bgreen}\u2713${C.reset} Ready  `);
+    process.stdout.write(`${C.dim}| ${C.cyan}${memStats.totalFacts}${C.reset} facts  `);
+    process.stdout.write(`${C.dim}| ${C.cyan}${CONFIG.model.split('/').pop()}${C.reset}\n`);
+    process.stdout.write(`${C.dim}${'\u2500'.repeat(Math.min(W - 2, 50))}${C.reset}\n`);
+
   } catch (error) {
-    console.error(`\nFatal: ${error.message}`);
+    process.stdout.write(`\n${C.bred}\u2717 ${error.message}${C.reset}\n\n`);
     process.exit(1);
   }
 
-  console.log('\nType your task or /help for commands.\n');
-
+  // ─── REPL ────────────────────────────────────────────────
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: ' nexus> '
+    prompt: `${C.bmagenta}\u25B8${C.reset} `,
+    historySize: 100,
+    removeHistoryDuplicates: true
   });
 
   rl.prompt();
@@ -480,14 +494,13 @@ async function startCLI() {
 
     try {
       const response = await agent.processMessage(input);
-      if (agent.state !== AGENT_STATE.THINKING && agent.state !== AGENT_STATE.EXECUTING) {
-        // Response was already streamed or is a meta-command
-        if (!input.startsWith('/')) {
-          console.log(); // Add spacing after streamed response
-        }
+
+      if (response === 'exit') {
+        process.stdout.write(`${C.dim}Goodbye.${C.reset}\n`);
+        process.exit(0);
       }
     } catch (error) {
-      console.error(`Error: ${error.message}`);
+      process.stdout.write(`${C.bred}Error: ${error.message}${C.reset}\n`);
     }
 
     rl.prompt();
@@ -498,11 +511,16 @@ async function startCLI() {
     process.exit(0);
   });
 
-  // Handle Ctrl+C gracefully
   process.on('SIGINT', async () => {
-    console.log('\n');
+    process.stdout.write(`\n${C.dim}Shutting down...${C.reset}\n`);
     await agent.shutdown();
     process.exit(0);
+  });
+
+  // Handle terminal resize
+  process.stdout.on('resize', () => {
+    Term.width = process.stdout.columns || 80;
+    Term.height = process.stdout.rows || 24;
   });
 }
 
@@ -514,26 +532,20 @@ async function startWebServer(agent, port = 8080) {
   const htmlPath = path.join(__dirname, 'web', 'index.html');
 
   const server = http.createServer(async (req, res) => {
-    // Serve the SPA
     if (req.url === '/' || req.url === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(fs.readFileSync(htmlPath, 'utf-8'));
       return;
     }
 
-    // API: Send message
     if (req.url === '/api/chat' && req.method === 'POST') {
       let body = '';
       req.on('data', chunk => body += chunk);
       req.on('end', async () => {
         try {
           const { message } = JSON.parse(body);
-          res.writeHead(200, {
-            'Content-Type': 'text/plain; charset=utf-8',
-            'Transfer-Encoding': 'chunked'
-          });
-
           const response = await agent.processMessage(message);
+          res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
           res.end(response);
         } catch (error) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -543,14 +555,12 @@ async function startWebServer(agent, port = 8080) {
       return;
     }
 
-    // API: Status
     if (req.url === '/api/status' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(agent.getStats()));
       return;
     }
 
-    // API: Memory query
     if (req.url.startsWith('/api/memory') && req.method === 'GET') {
       const url = new URL(req.url, `http://localhost:${port}`);
       const query = url.searchParams.get('q') || '';
@@ -561,20 +571,19 @@ async function startWebServer(agent, port = 8080) {
       return;
     }
 
-    // 404
     res.writeHead(404);
     res.end('Not found');
   });
 
   server.listen(port, '0.0.0.0', () => {
-    console.log(`[Nexus] Web interface: http://localhost:${port}`);
+    console.log(`[Nexus] Web: http://localhost:${port}`);
   });
 
   return server;
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  MAIN — Entry point
+//  MAIN
 // ═══════════════════════════════════════════════════════════════
 
 async function main() {
@@ -582,7 +591,6 @@ async function main() {
   const mode = args[0] || 'cli';
 
   if (mode === '--web' || mode === '-w') {
-    // Web server mode
     const port = parseInt(args[1]) || 8080;
     const agent = new NexusAgent({
       dataDir: path.join(__dirname, 'data'),
@@ -592,37 +600,35 @@ async function main() {
     await startWebServer(agent, port);
   } else if (mode === '--help' || mode === '-h') {
     console.log(`
-NEXUS — Autonomous Agent
+${C.bmagenta}${C.bold}NEXUS${C.reset} \u2014 Autonomous Agent
 
-Usage:
-  node index.js          Start CLI mode (default)
-  node index.js --web    Start web server mode (port 8080)
-  node index.js --web 3000  Start web server on custom port
-  node index.js --help   Show this help
+${C.cyan}Usage:${C.reset}
+  node index.js            ${C.dim}Start CLI mode (default)${C.reset}
+  node index.js --web      ${C.dim}Start web server (port 8080)${C.reset}
+  node index.js --web 3000 ${C.dim}Web server on custom port${C.reset}
+  node index.js --help     ${C.dim}Show this help${C.reset}
 
-Environment:
-  NVIDIA_API_KEY   Required. Get free key at https://build.nvidia.com/
+${C.cyan}Environment:${C.reset}
+  NVIDIA_API_KEY  ${C.dim}Required. Free at https://build.nvidia.com/${C.reset}
 
-Commands (in CLI):
-  /status     Show agent status
-  /memory     Show memory stats
-  /consolidate  Run memory consolidation
-  /clear      Clear conversation history
-  /help       Show help
-  /exit       Exit
-    `);
+${C.cyan}CLI Commands:${C.reset}
+  /status      ${C.dim}Agent status${C.reset}
+  /memory      ${C.dim}Memory stats${C.reset}
+  /consolidate ${C.dim}Run consolidation${C.reset}
+  /clear       ${C.dim}Clear history${C.reset}
+  /help        ${C.dim}Show help${C.reset}
+  /exit        ${C.dim}Exit${C.reset}
+`);
   } else {
-    // CLI mode
     await startCLI();
   }
 }
 
-// Run if executed directly
 if (require.main === module) {
   main().catch(err => {
-    console.error('Fatal error:', err.message);
+    console.error(`${C.bred}Fatal: ${err.message}${C.reset}`);
     process.exit(1);
   });
 }
 
-module.exports = { NexusAgent, AGENT_STATE, startCLI, startWebServer };
+module.exports = { NexusAgent, AGENT_STATE, startCLI, startWebServer, C, Term };
